@@ -2,15 +2,19 @@
 
 **Conecta de forma fácil tu Cisco ISR con doble factor de autenticación.**
 
+¿Te has planteado alguna vez proteger el acceso por consola o VPN de tu Cisco
+ISR con doble factor de autenticación y no has sabido cómo? Este proyecto te lo
+hace fácil.
+
 [![CI](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml)
 
-RadiusPilot puts Duo two-factor authentication in front of the remote access of
-a Cisco ISR router without the usual pain. People connect with AnyConnect over
-IKEv2, the router checks their password against FreeRADIUS, Duo asks for the
-Push, and a small web console keeps the accounts under control: see who has
-access, add an account, enrol it in Duo, reset a password, block it, or remove
-it.
+RadiusPilot puts Duo two-factor authentication in front of a Cisco ISR's remote
+access without the usual pain. People connect with AnyConnect over IKEv2, the
+router checks their password against FreeRADIUS, Duo asks for the Push, and the
+same FreeRADIUS-plus-Duo chain can front the router's own login as well. A
+small web console keeps the accounts under control: see who has access, add an
+account, enrol it in Duo, reset a password, block it, or remove it.
 
 The application runs on `radius01` behind Nginx. FastAPI listens only on
 loopback; Nginx publishes HTTPS to the approved internal and VPN networks. There
