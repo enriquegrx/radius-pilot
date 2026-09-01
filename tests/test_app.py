@@ -95,6 +95,8 @@ def fake_helper(operation: str, _payload=None):
         },
         "access_policy": {
             "custom_enabled": False,
+            "avpair_forwarding": True,
+            "gate_enabled": False,
             "allowed_destinations": ["192.0.2.0/24"],
             "objects": [
                 {
@@ -157,6 +159,9 @@ def test_dashboard_shows_expandable_details_and_expiry_warning(monkeypatch) -> N
     assert "js-object-edit" in response.text
     assert "Duo enrollment API" in response.text
     assert "Not configured" in response.text
+    assert "Setup readiness" in response.text
+    assert "1 account still on legacy clear text" in response.text
+    assert "RADIUS_ADMIN_CUSTOM_DACL_ENABLED=0" in response.text
 
 
 def test_duo_enrollment_settings_endpoint_forwards_payload(monkeypatch) -> None:

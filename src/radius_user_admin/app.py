@@ -367,6 +367,12 @@ def index(request: Request):
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
             "access_objects": access_policy.get("objects", []),
             "duo_enrollment_api": duo_enrollment_api,
+            "avpair_forwarding": bool(access_policy.get("avpair_forwarding")),
+            "custom_gate_enabled": bool(access_policy.get("gate_enabled")),
+            "smtp_configured": bool(os.environ.get("RADIUS_ADMIN_SMTP_HOST", "").strip()),
+            "legacy_count": sum(
+                user.get("credential_scheme") == "legacy-cleartext" for user in users
+            ),
         },
     )
 

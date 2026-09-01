@@ -48,6 +48,8 @@ elif sys.argv[1] == "list":
                 },
                 "access_policy": {
                     "custom_enabled": True,
+                    "avpair_forwarding": True,
+                    "gate_enabled": True,
                     "allowed_destinations": ["192.0.2.0/24"],
                     "objects": [
                         {

@@ -67,6 +67,9 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .user-detail { display: grid; gap: 1rem 1.5rem; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); padding: .3rem .2rem .45rem; }
 .user-detail-access { grid-column: 1 / -1; }
 .detail-label { color: #53667c; font-size: .72rem; font-weight: 600; letter-spacing: .04em; margin-bottom: .35rem; text-transform: uppercase; }
+.readiness-list { display: grid; gap: .8rem; list-style: none; margin: 0; padding: 0; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.readiness-list li { align-items: flex-start; display: flex; gap: .6rem; }
+.readiness-list .status-dot { flex: 0 0 auto; margin-top: .3rem; }
 .duo-api-form { align-items: end; display: grid; gap: .75rem; grid-template-columns: 1fr 1fr 1fr auto; }
 .duo-api-submit { padding-bottom: .1rem; }
 .detail-value { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }

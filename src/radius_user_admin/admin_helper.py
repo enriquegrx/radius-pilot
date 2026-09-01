@@ -5,6 +5,7 @@ import argparse
 import base64
 import fcntl
 import grp
+import gzip
 import hashlib
 import hmac
 import json
@@ -88,6 +89,9 @@ DUO_BEGIN = "# BEGIN RADIUS USER ADMIN EXEMPTIONS"
 DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
 DUO_SECTION = "radius_server_auto"
 BACKUP_NAME = re.compile(r"^(?:\d{8}T\d{12}Z|deploy-\d{8}T\d{6}Z)$")
+AUDIT_ROTATE_LINES = 10000
+AUDIT_ARCHIVES_KEPT = 6
+BACKUPS_KEPT = 40
 ADMIN_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{2,63}$")
 
 
@@ -558,6 +562,8 @@ class Store:
             "duo_enrollment_api": self.duo_enroll_api_status(),
             "access_policy": {
                 "custom_enabled": self._custom_dacl_ready(),
+                "avpair_forwarding": self._duo_passes_cisco_avpair(),
+                "gate_enabled": self.custom_dacl_enabled,
                 "allowed_destinations": [item.with_prefixlen for item in self.policy_destinations],
                 "objects": [
                     {
@@ -1216,7 +1222,51 @@ class Store:
             self._commit(data)
         if managed_files_changed:
             changes.append("reconciled managed RADIUS authorization")
+        changes.extend(self._rotate_audit())
+        changes.extend(self._prune_backups())
         return changes
+
+    def _rotate_audit(self) -> list[str]:
+        # Maintenance must never take authentication down: swallow I/O errors.
+        try:
+            if not self.audit_path.exists():
+                return []
+            with self.audit_path.open("rb") as source:
+                line_count = sum(1 for _ in source)
+            if line_count <= AUDIT_ROTATE_LINES:
+                return []
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            rotated = self.audit_path.with_name(f"audit-{stamp}.jsonl")
+            archive = self.audit_path.with_name(f"audit-{stamp}.jsonl.gz")
+            os.rename(self.audit_path, rotated)
+            with rotated.open("rb") as source, gzip.open(archive, "wb") as target:
+                shutil.copyfileobj(source, target)
+            os.chmod(archive, 0o600)
+            rotated.unlink()
+            archives = sorted(self.audit_path.parent.glob("audit-*.jsonl.gz"))
+            for old in archives[: max(0, len(archives) - AUDIT_ARCHIVES_KEPT)]:
+                old.unlink()
+            return [f"rotated audit log ({line_count} events archived)"]
+        except OSError:
+            return []
+
+    def _prune_backups(self) -> list[str]:
+        try:
+            if not self.backup_dir.exists():
+                return []
+            snapshots = sorted(
+                entry
+                for entry in self.backup_dir.iterdir()
+                if entry.is_dir() and BACKUP_NAME.fullmatch(entry.name)
+            )
+            excess = snapshots[: max(0, len(snapshots) - BACKUPS_KEPT)]
+            for entry in excess:
+                shutil.rmtree(entry)
+            if not excess:
+                return []
+            return [f"pruned {len(excess)} old configuration backups"]
+        except OSError:
+            return []
 
     @staticmethod
     def _clean_bool(value: object, field: str) -> bool:

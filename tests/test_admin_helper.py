@@ -788,6 +788,44 @@ def test_state_with_unknown_object_reference_fails_closed(store: Store) -> None:
         store.load()
 
 
+def test_reconcile_rotates_oversized_audit_log(store: Store) -> None:
+    store.audit_path.parent.mkdir(parents=True, exist_ok=True)
+    store.audit_path.write_text('{"action": "test"}\n' * 10001)
+    changes = store.reconcile()
+    assert any("rotated audit log" in change for change in changes)
+    assert not store.audit_path.exists()
+    archives = list(store.audit_path.parent.glob("audit-*.jsonl.gz"))
+    assert len(archives) == 1
+    assert oct(archives[0].stat().st_mode & 0o777) == "0o600"
+    assert store.reconcile() == []
+
+
+def test_reconcile_prunes_only_helper_backups(store: Store) -> None:
+    store.backup_dir.mkdir(parents=True, exist_ok=True)
+    for index in range(45):
+        (store.backup_dir / f"20260101T0000000000{index:02d}Z").mkdir()
+    (store.backup_dir / "deploy-20260901-165942").mkdir()
+    changes = store.reconcile()
+    # The first reconcile rewrites the bootstrapped authorize file, which adds
+    # one more helper backup before pruning runs: 46 snapshots, 40 kept.
+    assert any("pruned 6 old configuration backups" in change for change in changes)
+    remaining = sorted(entry.name for entry in store.backup_dir.iterdir())
+    assert len(remaining) == 41
+    assert "deploy-20260901-165942" in remaining
+    assert "20260101T000000000000Z" not in remaining
+    assert "20260101T000000000044Z" in remaining
+
+
+def test_public_list_reports_readiness_flags(store: Store) -> None:
+    policy = store.public_list()["access_policy"]
+    assert policy["avpair_forwarding"] is False
+    assert policy["gate_enabled"] is False
+    enable_custom_access(store)
+    policy = store.public_list()["access_policy"]
+    assert policy["avpair_forwarding"] is True
+    assert policy["gate_enabled"] is True
+
+
 def test_set_duo_enroll_api_validates_and_writes_root_only(store: Store) -> None:
     calls = []
     store._duo_request = (  # type: ignore[method-assign]
