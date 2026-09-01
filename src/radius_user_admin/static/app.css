@@ -14,6 +14,9 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .table > :not(caption) > * > * { padding-top: 1rem; padding-bottom: 1rem; }
 .btn-primary { background: var(--brand-blue); border-color: var(--brand-blue); }
 .page-body { padding-top: 2rem; }
+.admin-dialog { background: transparent; border: 0; max-height: calc(100vh - 2rem); padding: 0; width: min(640px,calc(100vw - 2rem)); }
+.admin-dialog::backdrop { backdrop-filter: blur(4px); background: rgba(16,36,62,.48); }
+.admin-dialog .modal-content { display: flex; max-height: calc(100vh - 2rem); }
 .admin-action-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2,minmax(0,1fr)); }
 .admin-action { background: #fff; border: 1px solid rgba(98,105,118,.22); border-radius: 10px; color: var(--brand-ink); min-height: 88px; padding: 1rem; text-align: left; transition: border-color .15s ease,box-shadow .15s ease,transform .15s ease; }
 .admin-action span { color: #667085; display: block; font-size: .8125rem; font-weight: 400; margin-top: .25rem; }

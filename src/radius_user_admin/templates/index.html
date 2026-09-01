@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex,nofollow">
     <title>Radius User Admin</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-2">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-2">
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-3">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-3">
   </head>
   <body>
     <div class="page">
@@ -89,15 +89,15 @@
       </form></div>
     </div>
 
-    <div class="modal modal-blur fade" id="action-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered"><form class="modal-content" id="action-form" method="post">
-        <div class="modal-header"><h2 class="modal-title" id="action-title">Manage user</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+    <dialog class="admin-dialog" id="action-modal" aria-labelledby="action-title">
+      <form class="modal-content" id="action-form" method="post">
+        <div class="modal-header"><h2 class="modal-title" id="action-title">Manage user</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
         <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div id="action-description" class="text-secondary mb-3"></div><div id="action-field"></div></div>
-        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal" id="action-cancel">Close</button><button class="btn btn-primary" id="action-submit" hidden>Apply change</button></div>
-      </form></div>
-    </div>
+        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close id="action-cancel">Close</button><button class="btn btn-primary" id="action-submit" hidden>Apply change</button></div>
+      </form>
+    </dialog>
 
-    <script src="{{ url_for('static', path='vendor/tabler/tabler.min.js') }}?v=20260901-2"></script>
-    <script src="{{ url_for('static', path='app.js') }}?v=20260901-2"></script>
+    <script src="{{ url_for('static', path='vendor/tabler/tabler.min.js') }}?v=20260901-3"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260901-3"></script>
   </body>
 </html>

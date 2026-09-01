@@ -1,12 +1,23 @@
 (() => {
   const modalElement = document.getElementById("action-modal");
-  const modal = modalElement ? new bootstrap.Modal(modalElement) : null;
   const form = document.getElementById("action-form");
   const title = document.getElementById("action-title");
   const description = document.getElementById("action-description");
   const field = document.getElementById("action-field");
   const submit = document.getElementById("action-submit");
   const cancel = document.getElementById("action-cancel");
+
+  if (!modalElement || !form || !title || !description || !field || !submit || !cancel) {
+    return;
+  }
+
+  const closeModal = () => modalElement.close();
+  modalElement.querySelectorAll("[data-dialog-close]").forEach((button) => {
+    button.addEventListener("click", closeModal);
+  });
+  modalElement.addEventListener("click", (event) => {
+    if (event.target === modalElement) closeModal();
+  });
 
   const input = (label, name, type, value = "") =>
     `<label class="form-label" for="action-input">${label}</label>` +
@@ -80,7 +91,7 @@
       field.querySelectorAll("[data-modal-action]").forEach((actionButton) => {
         actionButton.addEventListener("click", () => configureAction(actionButton.dataset.modalAction, user, nextEnabled, duoRequired));
       });
-      modal.show();
+      modalElement.showModal();
     });
   });
 })();
