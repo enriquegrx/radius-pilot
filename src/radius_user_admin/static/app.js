@@ -65,6 +65,68 @@
     update();
   });
 
+  const customAccessEnabled = document.body.dataset.customAccessEnabled === "true";
+  const accessEditorMarkup = () => `<label class="form-label">Network access</label><select class="form-select js-access-mode" name="access_mode"><option value="full">Full VPN access</option><option value="custom" ${customAccessEnabled ? "" : "disabled"}>Custom destinations and services</option></select><input type="hidden" name="access_rules" value="[]" class="js-access-rules"><div class="access-custom mt-3" hidden><div class="js-access-rule-list"></div><button class="btn btn-outline-primary btn-sm js-add-access-rule" type="button">Add destination</button><small class="form-hint d-block mt-2">The policy is applied on the next VPN connection. Routes shown by the client are not the security boundary.</small></div>`;
+  const portText = (ports) => (ports || []).map(([start, end]) => start === end ? String(start) : `${start}-${end}`).join(", ");
+  const accessRuleMarkup = (rule = {}) => `<div class="access-rule"><div><label class="form-label">Destination</label><input class="form-control js-rule-destination" placeholder="192.0.2.50 or 192.0.2.0/24" value="${escapeHtml(rule.destination || "")}" maxlength="43" required></div><div><label class="form-label">Protocol</label><select class="form-select js-rule-protocol"><option value="tcp" ${rule.protocol === "tcp" || !rule.protocol ? "selected" : ""}>TCP</option><option value="udp" ${rule.protocol === "udp" ? "selected" : ""}>UDP</option><option value="icmp" ${rule.protocol === "icmp" ? "selected" : ""}>ICMP</option><option value="ip" ${rule.protocol === "ip" ? "selected" : ""}>Any IP</option></select></div><div><label class="form-label">Ports</label><input class="form-control js-rule-ports" placeholder="Required: 443, 8000-8010" value="${escapeHtml(portText(rule.ports))}" maxlength="180"></div><button type="button" class="btn btn-ghost-danger js-remove-access-rule" aria-label="Remove rule">Remove</button></div>`;
+  const initializeAccessEditor = (editor, initialPolicy = {mode: "full", rules: []}, allowCustom = customAccessEnabled) => {
+    if (!editor) return;
+    const mode = editor.querySelector(".js-access-mode");
+    const hidden = editor.querySelector(".js-access-rules");
+    const custom = editor.querySelector(".access-custom");
+    const list = editor.querySelector(".js-access-rule-list");
+    const add = editor.querySelector(".js-add-access-rule");
+    const normalized = initialPolicy?.mode === "custom" ? initialPolicy : {mode: "full", rules: []};
+    mode.querySelector('option[value="custom"]').disabled = !allowCustom;
+    mode.value = normalized.mode;
+    const updatePortField = (row) => {
+      const protocol = row.querySelector(".js-rule-protocol").value;
+      const ports = row.querySelector(".js-rule-ports");
+      const supportsPorts = protocol === "tcp" || protocol === "udp";
+      ports.disabled = !supportsPorts;
+      ports.required = supportsPorts;
+      if (!supportsPorts) ports.value = "";
+    };
+    const bindRow = (row) => {
+      row.querySelector(".js-rule-protocol").addEventListener("change", () => updatePortField(row));
+      row.querySelector(".js-remove-access-rule").addEventListener("click", () => row.remove());
+      updatePortField(row);
+    };
+    const appendRule = (rule = {}) => {
+      list.insertAdjacentHTML("beforeend", accessRuleMarkup(rule));
+      bindRow(list.lastElementChild);
+    };
+    (normalized.rules || []).forEach(appendRule);
+    const updateMode = () => {
+      const restricted = mode.value === "custom";
+      custom.hidden = !restricted;
+      if (restricted && !list.children.length) appendRule();
+      list.querySelectorAll("input, select").forEach((input) => { input.disabled = !restricted; });
+      if (restricted) list.querySelectorAll(".access-rule").forEach(updatePortField);
+    };
+    const serialize = () => {
+      if (mode.value !== "custom") {
+        hidden.value = "[]";
+        return;
+      }
+      const rules = [...list.querySelectorAll(".access-rule")].map((row) => ({
+        destination: row.querySelector(".js-rule-destination").value.trim(),
+        protocol: row.querySelector(".js-rule-protocol").value,
+        ports: row.querySelector(".js-rule-ports").disabled ? "" : row.querySelector(".js-rule-ports").value.trim(),
+      }));
+      hidden.value = JSON.stringify(rules);
+    };
+    mode.addEventListener("change", updateMode);
+    add.addEventListener("click", () => appendRule());
+    editor.closest("form")?.addEventListener("submit", serialize);
+    updateMode();
+  };
+  document.querySelectorAll(".js-access-editor").forEach((editor) => {
+    let policy = {mode: "full", rules: []};
+    try { policy = JSON.parse(editor.dataset.initialPolicy || "{}"); } catch (_error) { /* server validation remains authoritative */ }
+    initializeAccessEditor(editor, policy);
+  });
+
   const generatePassword = () => {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#%+-_";
     const values = new Uint32Array(24);
@@ -158,6 +220,16 @@
         field.innerHTML = `<label class="form-label" for="action-input">Account expiry</label><input class="form-control" id="action-input" name="expires_at" type="datetime-local" value="${localDateTime(data.expiresAt)}"><small class="form-hint">Leave empty to remove the expiry.</small>`;
         form.action = `/users/${encode(user)}/expiry`;
         submit.textContent = "Save expiry";
+      } else if (action === "access") {
+        let policy = {mode: "full", rules: []};
+        try { policy = JSON.parse(data.accessPolicy || "{}"); } catch (_error) { /* fail closed in the helper */ }
+        title.textContent = `Network access for ${user}`;
+        const eligible = data.customAccessEligible !== "false";
+        description.textContent = eligible ? "Full access keeps the current VPN reachability. Custom access permits only the listed destinations and services." : "This username is reserved for router-local fallback, so it must keep full access.";
+        field.innerHTML = `<div class="js-access-editor">${accessEditorMarkup()}</div>`;
+        initializeAccessEditor(field.querySelector(".js-access-editor"), policy, eligible && customAccessEnabled);
+        form.action = `/users/${encode(user)}/access`;
+        submit.textContent = "Save access policy";
       } else if (action === "duo-check") {
         title.textContent = `Check Duo readiness for ${user}?`;
         description.textContent = "This checks enrollment and Push capability. It does not send a Push.";
@@ -170,7 +242,7 @@
         description.textContent = activeEnrollment ? "The current activation is still valid." : "Duo will create the user and issue a QR code valid for seven days.";
         field.innerHTML = `<div class="change-summary"><span>Second factor</span><strong>${activeEnrollment ? "Active Duo Mobile QR" : "Create Duo Mobile activation"}</strong></div>`;
         form.action = `/users/${encode(user)}/duo-${activeEnrollment ? "enrollment" : "enroll"}`;
-        form.method = activeEnrollment ? "get" : "post";
+        form.method = "post";
         submit.textContent = activeEnrollment ? "View QR" : "Create enrollment";
       } else if (action === "panel") {
         const enable = data.panelAccess !== "true";
@@ -210,7 +282,7 @@
         const enrollmentLabel = data.duoEnrollmentActive === "true" ? "View Duo enrollment" : "Enroll in Duo";
         const enrollmentHint = data.duoEnrollmentActive === "true" ? "Open the active QR and mobile link" : "Create a seven-day QR activation";
         const credentialAction = data.credentialScheme === "legacy-cleartext" ? `<button type="button" class="admin-action" data-modal-action="credential">Protect stored password<span>Migrate to an MS-CHAPv2-compatible NT hash</span></button>` : "";
-        field.innerHTML = `<div class="admin-action-grid"><button type="button" class="admin-action" data-modal-action="rename">Rename user<span>Keep RADIUS and Duo aligned</span></button><button type="button" class="admin-action" data-modal-action="password">Reset VPN password<span>Generate or enter a new secret</span></button>${credentialAction}<button type="button" class="admin-action" data-modal-action="duo-enroll">${enrollmentLabel}<span>${enrollmentHint}</span></button><button type="button" class="admin-action" data-modal-action="duo">${duoLabel}<span>Change VPN second-factor enforcement</span></button><button type="button" class="admin-action" data-modal-action="panel">${panelLabel}<span>Separate console credential + Duo</span></button><button type="button" class="admin-action" data-modal-action="expiry">Set account expiry<span>Automatic access cutoff</span></button><button type="button" class="admin-action" data-modal-action="duo-check">Check Duo readiness<span>Enrollment and Push capability</span></button><button type="button" class="admin-action" data-modal-action="status">${statusLabel}<span>Change VPN access immediately</span></button><button type="button" class="admin-action admin-action-danger" data-modal-action="delete">Delete user<span>Remove the local credential</span></button></div>`;
+        field.innerHTML = `<div class="admin-action-grid"><button type="button" class="admin-action" data-modal-action="access">Network access<span>${escapeHtml(data.accessSummary || "Full access")}</span></button><button type="button" class="admin-action" data-modal-action="rename">Rename user<span>Keep RADIUS and Duo aligned</span></button><button type="button" class="admin-action" data-modal-action="password">Reset VPN password<span>Generate or enter a new secret</span></button>${credentialAction}<button type="button" class="admin-action" data-modal-action="duo-enroll">${enrollmentLabel}<span>${enrollmentHint}</span></button><button type="button" class="admin-action" data-modal-action="duo">${duoLabel}<span>Change VPN second-factor enforcement</span></button><button type="button" class="admin-action" data-modal-action="panel">${panelLabel}<span>Separate console credential + Duo</span></button><button type="button" class="admin-action" data-modal-action="expiry">Set account expiry<span>Automatic access cutoff</span></button><button type="button" class="admin-action" data-modal-action="duo-check">Check Duo readiness<span>Enrollment and Push capability</span></button><button type="button" class="admin-action" data-modal-action="status">${statusLabel}<span>Change VPN access immediately</span></button><button type="button" class="admin-action admin-action-danger" data-modal-action="delete">Delete user<span>Remove the local credential</span></button></div>`;
         field.querySelectorAll("[data-modal-action]").forEach((actionButton) => actionButton.addEventListener("click", () => configureAction(actionButton.dataset.modalAction, data)));
         modal.showModal();
       });

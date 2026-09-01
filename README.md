@@ -29,6 +29,8 @@ before it reaches the live authentication service.
   Existing clear-text entries can be migrated one account at a time with
   backup and rollback. Cisco IKEv2 cannot validate bcrypt credentials.
 - Switches each enabled account between password plus Duo Push and password only.
+- Gives each VPN account either the normal full-access profile or a custom
+  allowlist of IPv4 destinations, protocols, and ports.
 - Protects the console with a separate scrypt-hashed administrator password,
   Duo Push, a 30-minute idle timeout, CSRF protection, and login rate limiting.
 - Assigns panel access as an explicit per-user role. A panel administrator keeps
@@ -92,6 +94,12 @@ The helper maintains:
   dedicated Auth API enrollment integration; this file must never enter Git.
 - `/var/backups/radius-user-admin/` — dated snapshots before every mutation.
 
+For a custom access policy, the helper compiles the validated form fields into
+Cisco `Cisco-AVPair` reply attributes in the generated FreeRADIUS file. The
+browser never accepts raw ACL lines or arbitrary RADIUS attributes. Full-access
+accounts receive no policy attributes and continue to use the VPN gateway's
+normal group policy.
+
 Authentication history is read from Duo Authentication Proxy's structured
 `authevents.log`. Only the timestamp, username, source address, stage, and result
 are returned to the web process.
@@ -135,6 +143,99 @@ disabled so bearer tokens do not enter request logs.
 Set `RADIUS_ADMIN_AUTHORIZE_PATH` when the managed FreeRADIUS files module uses
 a site-specific directory. The helper deliberately has no directory discovery:
 an explicit path prevents it from editing the wrong `authorize` file.
+
+### Per-user VPN access policies
+
+Every account has one of two network access modes:
+
+- **Full access** keeps the gateway's existing VPN group policy. This is the
+  default for new accounts and for accounts migrated from an older RadiusPilot
+  state file.
+- **Custom access** permits only the destinations and services selected in the
+  panel. A destination may be a single IPv4 host or a CIDR network. Protocols
+  are limited to IP, ICMP, TCP, and UDP; TCP and UDP require one or more
+  individual ports or ordered ranges such as `443,8000-8010`.
+
+Custom input is canonicalised and checked against
+`RADIUS_ADMIN_POLICY_DESTINATIONS`. Loopback, link-local, multicast,
+unspecified, IPv6, `/0`, out-of-scope destinations, malformed ports, and
+unknown fields are rejected. Structural limits allow up to 24 rules and 63
+permit entries, while a stricter RADIUS reply budget caps the result at 48
+Cisco attributes and 3,000 encoded bytes. A maximal combination may therefore
+be rejected before those structural ceilings. Duplicate rules are removed.
+The generated downloadable ACL always ends with an explicit `deny ip any any`
+entry.
+
+RadiusPilot returns two kinds of `Cisco-AVPair` for a custom account:
+
+- `ipsec:route-set=prefix ...` gives the VPN client a useful route to each
+  selected destination.
+- `ip:inacl#...` carries the ordered permit entries and final deny entry that
+  enforce the policy on the VPN session.
+
+The distinction matters: **a pushed route is not a security boundary**. A route
+only tells the client where to send traffic. Enforcement comes from the ACL
+installed on the session, and the target IOS XE release must be tested to prove
+both an allowed connection and a denied connection.
+
+Custom access is deliberately protected by two independent readiness checks.
+First, narrow the destination scope and leave the feature disabled:
+
+```dotenv
+RADIUS_ADMIN_POLICY_DESTINATIONS=192.0.2.0/24,198.51.100.0/24
+RADIUS_ADMIN_CUSTOM_DACL_ENABLED=0
+RADIUS_ADMIN_LOCAL_FALLBACK_USERS=router-break-glass
+```
+
+List every router-local fallback username in
+`RADIUS_ADMIN_LOCAL_FALLBACK_USERS`. RadiusPilot refuses to assign Custom
+access to those names: if RADIUS became unreachable, the gateway could
+authenticate the matching local account without any downloaded attributes.
+Keep restricted VPN identities separate from break-glass router accounts.
+
+Then allow the Duo Authentication Proxy to preserve only the required reply
+attribute. Add this setting to its existing `[radius_client]` section; do not
+place it in the RadiusPilot-managed exemption block:
+
+```ini
+[radius_client]
+pass_through_attr_names=Cisco-AVPair
+```
+
+If that section already forwards named attributes, keep the existing names and
+append `Cisco-AVPair` to the comma-separated value. Broad
+`pass_through_all=true` forwarding also satisfies the technical check, but a
+narrow named allowlist is easier to review.
+
+The five-minute reconciler also treats this dependency as a fail-closed
+condition. If attribute forwarding is removed while custom accounts exist,
+their active FreeRADIUS entries are withheld until forwarding is healthy
+again. Their saved policies are retained, so access can be restored without
+rebuilding the rules.
+
+#### Safe rollout checklist 🚦
+
+1. Back up the RadiusPilot state, generated `authorize` file, and Duo
+   Authentication Proxy configuration with a dated identifier.
+2. Deploy the application while
+   `RADIUS_ADMIN_CUSTOM_DACL_ENABLED=0`. Bootstrap or migrate the state, run the
+   test suite, validate the full FreeRADIUS configuration, and confirm the web
+   service still lists existing accounts as full access.
+3. Add `Cisco-AVPair` forwarding to a temporary Duo configuration, run Duo's
+   connectivity/configuration check, install it with its original ownership and
+   permissions, and restart the proxy only after validation succeeds.
+4. Set `RADIUS_ADMIN_CUSTOM_DACL_ENABLED=1`, restart RadiusPilot, and create a
+   temporary password-only canary account with one tightly scoped allow rule.
+5. Start a new VPN session with the canary. Confirm that its intended host and
+   port work, and that a different port and destination are denied. Inspect the
+   IOS XE session if the platform exposes the downloaded ACL.
+6. Disconnect and remove the canary. If either deny test fails, set the feature
+   gate back to `0`, restart RadiusPilot, restore the previous Duo configuration,
+   and do not assign custom policies on that platform.
+
+Policy changes apply to newly authenticated sessions. An already connected user
+must disconnect and reconnect before a new ACL or route set takes effect. The
+same reconnect rule applies when changing an account back to full access.
 
 ### Password migration
 

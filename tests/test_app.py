@@ -38,6 +38,9 @@ def fake_helper(operation: str, _payload=None):
                 "panel_access": True,
                 "duo_enrollment_active": False,
                 "credential_scheme": "nt-hash",
+                "access_policy": {"mode": "full", "rules": []},
+                "access_summary": "Full access",
+                "custom_access_eligible": True,
                 "created_at": "2026-09-01T06:00:00+00:00",
                 "updated_at": "2026-09-01T06:00:00+00:00",
             }
@@ -50,6 +53,10 @@ def fake_helper(operation: str, _payload=None):
             "certificate": {"valid": True, "days_remaining": 89},
             "last_backup": None,
             "disk_free_mb": 4096,
+        },
+        "access_policy": {
+            "custom_enabled": False,
+            "allowed_destinations": ["192.0.2.0/24"],
         },
     }
 
@@ -71,6 +78,77 @@ def test_dashboard_renders_user_without_password(monkeypatch) -> None:
     assert "long-enough-password" not in response.text
     assert "js-manage" in response.text
     assert "dropdown-menu" not in response.text
+
+
+def test_access_policy_endpoint_forwards_valid_rules(monkeypatch) -> None:
+    mutations = []
+
+    def recording_helper(operation: str, payload=None):
+        if operation == "set-access-policy":
+            mutations.append(payload)
+            return {"ok": True}
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", recording_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/users/vpn-test-user/access",
+        data={
+            "csrf": csrf,
+            "access_mode": "custom",
+            "access_rules": (
+                '[{"destination":"192.0.2.10/32","protocol":"tcp","ports":"443"}]'
+            ),
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert len(mutations) == 1
+    assert mutations[0]["username"] == "vpn-test-user"
+    assert mutations[0]["_actor"] == "admin"
+    assert mutations[0]["access_policy"] == {
+        "mode": "custom",
+        "rules": [
+            {"destination": "192.0.2.10/32", "protocol": "tcp", "ports": "443"}
+        ],
+    }
+
+
+def test_access_policy_endpoint_rejects_malformed_rules(monkeypatch) -> None:
+    operations = []
+
+    def recording_helper(operation: str, payload=None):
+        operations.append(operation)
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", recording_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/users/vpn-test-user/access",
+        data={"csrf": csrf, "access_mode": "custom", "access_rules": "{"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "The custom access rules are invalid." in response.text
+    assert "set-access-policy" not in operations
 
 
 def test_health_endpoint() -> None:

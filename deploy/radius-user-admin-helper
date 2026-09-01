@@ -1,0 +1,19 @@
+#!/usr/bin/python3
+"""Run the privileged helper from the root-owned application source tree."""
+
+from __future__ import annotations
+
+import runpy
+import sys
+from pathlib import Path
+
+APP_SOURCE = Path("/opt/radius-user-admin/src")
+
+
+def main() -> None:
+    sys.path.insert(0, str(APP_SOURCE))
+    runpy.run_module("radius_user_admin.admin_helper", run_name="__main__")
+
+
+if __name__ == "__main__":
+    main()

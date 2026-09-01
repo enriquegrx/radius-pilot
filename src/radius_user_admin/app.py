@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import ipaddress
+import json
 import os
 import secrets
 import smtplib
@@ -160,6 +161,23 @@ def utc_form_time(value: str) -> str | None:
     return parsed.astimezone(UTC).isoformat(timespec="seconds")
 
 
+def access_policy_payload(mode: str, rules_json: str) -> dict[str, object]:
+    clean_mode = mode.strip().lower()
+    if clean_mode == "full":
+        return {"mode": "full", "rules": []}
+    if clean_mode != "custom":
+        raise HelperError("Choose full or custom network access.")
+    if len(rules_json) > 12000:
+        raise HelperError("The custom access policy is too large.")
+    try:
+        rules = json.loads(rules_json)
+    except json.JSONDecodeError as exc:
+        raise HelperError("The custom access rules are invalid.") from exc
+    if not isinstance(rules, list):
+        raise HelperError("The custom access rules are invalid.")
+    return {"mode": "custom", "rules": rules}
+
+
 def invitation_url(request: Request, token: str) -> str:
     configured = os.environ.get("RADIUS_ADMIN_PUBLIC_URL", "").rstrip("/")
     base = configured or str(request.base_url).rstrip("/")
@@ -285,6 +303,9 @@ def index(request: Request):
         invitations = call_helper("invite-list")["invitations"]
         users = data["users"]
         health = data["health"]
+        access_policy = data.get(
+            "access_policy", {"custom_enabled": False, "allowed_destinations": []}
+        )
     except HelperError as exc:
         users, backups, invitations, error = [], [], [], str(exc)
         activity = {"events": [], "auth_events": []}
@@ -297,6 +318,7 @@ def index(request: Request):
             "last_backup": None,
             "disk_free_mb": None,
         }
+        access_policy = {"custom_enabled": False, "allowed_destinations": []}
     flash = request.session.pop("flash", {})
     return templates.TemplateResponse(
         request,
@@ -322,6 +344,8 @@ def index(request: Request):
                 user["effective_enabled"] and not user["effective_duo_required"] for user in users
             ),
             "panel_admin_count": sum(user["panel_access"] for user in users),
+            "custom_access_enabled": bool(access_policy.get("custom_enabled")),
+            "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
         },
     )
 
@@ -339,12 +363,15 @@ def create_invitation(
     email: str = Form(default=""),
     duo_required: bool = Form(default=True),
     valid_hours: int = Form(default=24),
+    access_mode: str = Form(default="full"),
+    access_rules: str = Form(default="[]"),
 ):
     admin = require_admin(request)
     if isinstance(admin, RedirectResponse):
         return admin
     try:
         check_csrf(request, csrf)
+        access_policy = access_policy_payload(access_mode, access_rules)
         result = call_helper(
             "invite-create",
             helper_payload(
@@ -354,6 +381,7 @@ def create_invitation(
                     "email": email,
                     "duo_required": duo_required,
                     "valid_hours": valid_hours,
+                    "access_policy": access_policy,
                 },
             ),
         )["invitation"]
@@ -485,6 +513,8 @@ def create_user(
     duo_bypass_reason: str = Form(default=""),
     panel_access: bool = Form(default=False),
     panel_password: str = Form(default=""),
+    access_mode: str = Form(default="full"),
+    access_rules: str = Form(default="[]"),
 ):
     try:
         admin = require_admin(request)
@@ -493,6 +523,7 @@ def create_user(
         check_csrf(request, csrf)
         account_expiry = utc_form_time(expires_at)
         bypass_expiry = utc_form_time(duo_bypass_until)
+        access_policy = access_policy_payload(access_mode, access_rules)
     except HelperError as exc:
         return redirect(request, str(exc), "danger", "users")
     enrollment_needed = False
@@ -530,6 +561,7 @@ def create_user(
         "duo_bypass_reason": duo_bypass_reason,
         "panel_access": panel_access,
         "panel_password": panel_password,
+        "access_policy": access_policy,
     }
     try:
         call_helper("create", helper_payload(request, payload))
@@ -660,6 +692,26 @@ def set_expiry(
     except HelperError as exc:
         return redirect(request, str(exc), "danger", "users")
     return mutate(request, csrf, "set-expiry", {"username": username, "expires_at": expiry})
+
+
+@app.post("/users/{username}/access")
+def set_access_policy(
+    username: str,
+    request: Request,
+    csrf: str = Form(),
+    access_mode: str = Form(),
+    access_rules: str = Form(default="[]"),
+):
+    try:
+        policy = access_policy_payload(access_mode, access_rules)
+    except HelperError as exc:
+        return redirect(request, str(exc), "danger", "users")
+    return mutate(
+        request,
+        csrf,
+        "set-access-policy",
+        {"username": username, "access_policy": policy},
+    )
 
 
 @app.post("/users/{username}/duo-check")

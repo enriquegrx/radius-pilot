@@ -59,6 +59,10 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .admin-action:hover,.admin-action:focus-visible { border-color: var(--brand-blue); box-shadow: 0 6px 18px rgba(23,102,177,.12); outline: 0; transform: translateY(-1px); }
 .admin-action-danger { color: #c33232; }
 .admin-action-danger:hover,.admin-action-danger:focus-visible { border-color: #c33232; box-shadow: 0 6px 18px rgba(195,50,50,.1); }
+.access-custom { background: #f6f8fb; border: 1px solid rgba(98,105,118,.16); border-radius: 12px; padding: 1rem; }
+.access-rule { align-items: end; display: grid; gap: .65rem; grid-template-columns: minmax(180px,1.4fr) minmax(110px,.65fr) minmax(170px,1fr) auto; margin-bottom: .8rem; }
+.access-rule .form-label { font-size: .75rem; margin-bottom: .3rem; }
+.access-rule .js-remove-access-rule { margin-bottom: .1rem; }
 @media (max-width: 767px) {
   .admin-header .container-xl { align-items: flex-start; flex-direction: column; padding-block: 1rem; }
   .header-actions { justify-content: space-between; width: 100%; }
@@ -68,6 +72,8 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
   .user-card-header,.section-heading { align-items: stretch; flex-direction: column; }
   .user-tools { grid-template-columns: 1fr; width: 100%; }
   .section-nav { overflow-x: auto; max-width: 100%; }
+  .access-rule { align-items: stretch; grid-template-columns: 1fr; }
+  .access-rule .js-remove-access-rule { justify-self: start; }
 }
 @media (min-width: 768px) and (max-width: 1199px) {
   .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }

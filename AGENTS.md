@@ -7,7 +7,8 @@ Example Organization FreeRADIUS user file. Keep its scope narrow: list users, cr
 choose per-user Duo enforcement, rename users, reset passwords, block/unblock
 users, create one-time account invitations, migrate legacy VPN credentials to
 MS-CHAPv2-compatible NT hashes, create time-limited Duo Mobile enrollments through the Auth API, and
-delete users.
+delete users. It also assigns full or tightly validated custom IPv4 access
+policies to individual VPN users.
 
 ## Security boundaries
 
@@ -38,6 +39,12 @@ delete users.
   fails.
 - Manage Duo exceptions only inside the marked `radius_server_auto` block. Never
   change keys, secrets, hosts, ports, or Cisco router configuration here.
+- Never accept raw ACL text or RADIUS attributes from the browser. Compile
+  custom policies only from validated destinations, protocols and ports.
+- Custom downloadable ACLs remain feature-gated until the exact IOS XE platform
+  has passed a real allow-and-deny VPN test and Duo forwards `Cisco-AVPair`.
+- Pushed routes are usability hints, not an enforcement boundary. Every custom
+  policy must end in an explicit deny entry.
 - Audit actor, source address, action, target, and outcome, but never payloads or
   credentials. CSV exports must neutralize spreadsheet formulas.
 
@@ -62,6 +69,8 @@ delete users.
   path preserved.
 - Account expirations must be enforced by the reconciliation timer, not only by
   browser rendering.
+- Existing users migrate to full access. Unknown or corrupt policies fail
+  closed and must never fall back silently to full access.
 - Restores may only use exact helper-created backup identifiers. Always create a
   new backup and validate both authentication services before accepting one.
 - Prevent blocking or deleting the final enabled user.

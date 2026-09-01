@@ -8,6 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 from radius_user_admin import admin_helper
+from radius_user_admin.access_policy import (
+    AccessPolicyError,
+    cisco_avpairs,
+    clean_access_policy,
+)
 from radius_user_admin.admin_helper import AdminError, Store
 
 
@@ -185,6 +190,46 @@ def test_validation_failure_rolls_back_both_files(
     assert store.duo_config_path.read_bytes() == old_duo
 
 
+def test_render_failure_happens_before_any_managed_file_is_written(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_state = store.state_path.read_bytes()
+    old_authorize = store.authorize_path.read_bytes()
+    old_duo = store.duo_config_path.read_bytes()
+
+    def fail_render(_data: dict[str, object]) -> str:
+        raise AdminError("Policy rendering failed.")
+
+    monkeypatch.setattr(store, "_render", fail_render)
+    with pytest.raises(AdminError, match="rendering failed"):
+        store._commit(store.load())
+
+    assert store.state_path.read_bytes() == old_state
+    assert store.authorize_path.read_bytes() == old_authorize
+    assert store.duo_config_path.read_bytes() == old_duo
+
+
+def test_version_three_state_requires_explicit_access_policy(store: Store) -> None:
+    data = json.loads(store.state_path.read_text())
+    data["users"][0].pop("access_policy")
+    store.state_path.write_text(json.dumps(data))
+
+    with pytest.raises(AdminError, match="missing required security fields"):
+        store.load()
+
+
+def test_legacy_state_migrates_missing_access_policy_to_full(store: Store) -> None:
+    data = json.loads(store.state_path.read_text())
+    data["version"] = 2
+    data["users"][0].pop("access_policy")
+    store.state_path.write_text(json.dumps(data))
+
+    assert store.load()["users"][0]["access_policy"] == {
+        "mode": "full",
+        "rules": [],
+    }
+
+
 def test_password_only_user_gets_managed_duo_exemption(store: Store) -> None:
     store.mutate(
         "create",
@@ -256,6 +301,24 @@ def test_runtime_setting_prefers_explicit_environment(
         admin_helper.runtime_setting("RADIUSPILOT_TEST_SETTING", "/fallback")
         == "/safe/explicit/path"
     )
+
+
+def test_store_reads_policy_destinations_from_runtime_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = admin_helper.runtime_setting
+
+    def setting(name: str, default: str) -> str:
+        if name == "RADIUS_ADMIN_POLICY_DESTINATIONS":
+            return "192.0.2.0/24,198.51.100.0/24"
+        return original(name, default)
+
+    monkeypatch.setattr(admin_helper, "runtime_setting", setting)
+    configured = Store(custom_dacl_enabled=False, runner=Runner())
+    assert [item.with_prefixlen for item in configured.policy_destinations] == [
+        "192.0.2.0/24",
+        "198.51.100.0/24",
+    ]
 
 
 def test_duo_enrollment_is_kept_root_only(store: Store) -> None:
@@ -423,3 +486,393 @@ def test_panel_password_must_differ_from_vpn_password(store: Store) -> None:
                 "panel_password": "same-password-for-both-2026",
             },
         )
+
+
+def custom_policy() -> dict[str, object]:
+    return {
+        "mode": "custom",
+        "rules": [
+            {
+                "destination": "192.168.50.112",
+                "protocol": "tcp",
+                "ports": "443, 8000-8010",
+            }
+        ],
+    }
+
+
+def enable_custom_access(store: Store) -> None:
+    store.custom_dacl_enabled = True
+    config = store.duo_config_path.read_text().replace(
+        "port=18120", "port=18120\npass_through_attr_names=Cisco-AVPair"
+    )
+    store.duo_config_path.write_text(config)
+
+
+def test_access_policy_canonicalizes_hosts_ports_and_duplicates() -> None:
+    policy = clean_access_policy(
+        {
+            "mode": "custom",
+            "rules": [
+                {"destination": "192.168.50.112", "protocol": "tcp", "ports": "443"},
+                {
+                    "destination": "192.168.50.112/32",
+                    "protocol": "tcp",
+                    "ports": [[443, 443]],
+                },
+            ],
+        }
+    )
+    assert policy == {
+        "mode": "custom",
+        "rules": [
+            {
+                "destination": "192.168.50.112/32",
+                "protocol": "tcp",
+                "ports": [[443, 443]],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"mode": "custom", "rules": []},
+        {
+            "mode": "custom",
+            "rules": [{"destination": "0.0.0.0/0", "protocol": "ip", "ports": ""}],
+        },
+        {
+            "mode": "custom",
+            "rules": [{"destination": "203.0.113.10", "protocol": "tcp", "ports": "443"}],
+        },
+        {
+            "mode": "custom",
+            "rules": [{"destination": "192.168.50.10", "protocol": "icmp", "ports": "443"}],
+        },
+        {
+            "mode": "custom",
+            "rules": [{"destination": "192.168.50.10", "protocol": "tcp", "ports": "70000"}],
+        },
+        {
+            "mode": "custom",
+            "rules": [{"destination": "192.168.50.10", "protocol": "tcp", "ports": ""}],
+        },
+    ],
+)
+def test_access_policy_rejects_unsafe_rules(policy: dict[str, object]) -> None:
+    with pytest.raises(AccessPolicyError):
+        clean_access_policy(policy)
+
+
+def test_access_policy_rejects_radius_reply_larger_than_udp_budget() -> None:
+    policy = clean_access_policy(
+        {
+            "mode": "custom",
+            "rules": [
+                {
+                    "destination": f"10.0.0.{host}/32",
+                    "protocol": "tcp",
+                    "ports": "80,443,8443",
+                }
+                for host in range(1, 22)
+            ],
+        }
+    )
+    with pytest.raises(AccessPolicyError, match="Access-Accept"):
+        cisco_avpairs(policy)
+
+
+def test_custom_access_requires_feature_gate_and_duo_forwarding(store: Store) -> None:
+    with pytest.raises(AdminError, match="disabled"):
+        store.mutate(
+            "create",
+            {
+                "username": "restricted-user",
+                "password": "a-safe-password-2026",
+                "duo_required": True,
+                "access_policy": custom_policy(),
+            },
+        )
+    store.custom_dacl_enabled = True
+    with pytest.raises(AdminError, match="disabled"):
+        store.mutate(
+            "create",
+            {
+                "username": "restricted-user",
+                "password": "a-safe-password-2026",
+                "duo_required": True,
+                "access_policy": custom_policy(),
+            },
+        )
+
+
+def test_router_local_fallback_username_cannot_receive_custom_access(
+    store: Store,
+) -> None:
+    enable_custom_access(store)
+    store.local_fallback_users = frozenset({"restricted-user"})
+    with pytest.raises(AdminError, match="router-local fallback"):
+        store.mutate(
+            "create",
+            {
+                "username": "restricted-user",
+                "password": "a-safe-password-2026",
+                "duo_required": True,
+                "access_policy": custom_policy(),
+            },
+        )
+
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": {"mode": "full", "rules": []},
+        },
+    )
+    user = next(
+        item for item in store.public_list()["users"] if item["username"] == "restricted-user"
+    )
+    assert user["custom_access_eligible"] is False
+
+
+def test_custom_user_cannot_be_renamed_to_router_local_fallback(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    store.local_fallback_users = frozenset({"router-break-glass"})
+
+    with pytest.raises(AdminError, match="router-local fallback"):
+        store.mutate(
+            "rename",
+            {"username": "restricted-user", "new_username": "router-break-glass"},
+        )
+
+    assert any(
+        item["username"] == "restricted-user" for item in store.load()["users"]
+    )
+
+
+def test_custom_access_renders_routes_and_downloadable_acl(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    authorize = store.authorize_path.read_text()
+    assert 'Cisco-AVPair += "ipsec:route-set=prefix 192.168.50.112/32",' in authorize
+    assert (
+        'Cisco-AVPair += "ip:inacl#1=permit tcp any host 192.168.50.112 eq 443",'
+        in authorize
+    )
+    assert (
+        'Cisco-AVPair += "ip:inacl#2=permit tcp any host 192.168.50.112 range 8000 8010",'
+        in authorize
+    )
+    assert 'Cisco-AVPair += "ip:inacl#3=deny ip any any"' in authorize
+    public = {user["username"]: user for user in store.public_list()["users"]}
+    assert public["restricted-user"]["access_summary"] == (
+        "Custom · 1 destination · 2 services"
+    )
+    assert public["restricted-user"]["access_policy"]["mode"] == "custom"
+
+
+def test_blocking_custom_user_removes_all_radius_attributes(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    store.mutate("set-enabled", {"username": "restricted-user", "enabled": False})
+    assert "restricted-user" not in store.authorize_path.read_text()
+
+
+def test_reconcile_fails_custom_access_closed_if_duo_stops_forwarding(
+    store: Store,
+) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    healthy_config = store.duo_config_path.read_text()
+    store.duo_config_path.write_text(
+        healthy_config.replace("\npass_through_attr_names=Cisco-AVPair", "")
+    )
+
+    changes = store.reconcile()
+    assert "reconciled managed RADIUS authorization" in changes
+    assert "restricted-user" not in store.authorize_path.read_text()
+    restricted = next(
+        user for user in store.load()["users"] if user["username"] == "restricted-user"
+    )
+    assert restricted["enabled"] is True
+
+    store.duo_config_path.write_text(healthy_config)
+    store.reconcile()
+    assert "restricted-user" in store.authorize_path.read_text()
+
+
+def test_bootstrap_reconciles_custom_access_if_duo_stops_forwarding(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    store.duo_config_path.write_text(
+        store.duo_config_path.read_text().replace(
+            "\npass_through_attr_names=Cisco-AVPair", ""
+        )
+    )
+
+    store.bootstrap()
+
+    authorize = store.authorize_path.read_text()
+    assert "restricted-user" not in authorize
+    assert "vpn-test-user" in authorize
+
+
+def test_bootstrap_empties_authorize_if_state_json_is_invalid(store: Store) -> None:
+    store.state_path.write_text("{")
+
+    with pytest.raises(json.JSONDecodeError):
+        store.bootstrap()
+
+    authorize = store.authorize_path.read_text()
+    assert "Emergency fail-closed" in authorize
+    assert "vpn-test-user" not in authorize
+
+
+def test_reconcile_empties_authorize_if_policy_state_is_invalid(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    healthy_state = store.state_path.read_bytes()
+    data = json.loads(healthy_state)
+    restricted = next(
+        user for user in data["users"] if user["username"] == "restricted-user"
+    )
+    restricted["access_policy"]["rules"][0]["destination"] = "203.0.113.10/32"
+    store.state_path.write_text(json.dumps(data))
+
+    with pytest.raises(AdminError, match="outside"):
+        store.reconcile()
+    authorize = store.authorize_path.read_text()
+    assert "Emergency fail-closed" in authorize
+    assert "restricted-user" not in authorize
+    assert "vpn-test-user" not in authorize
+
+    store.state_path.write_bytes(healthy_state)
+    store.reconcile()
+    assert "restricted-user" in store.authorize_path.read_text()
+
+
+def test_bootstrap_recovers_generated_custom_policy(store: Store, tmp_path: Path) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "restricted-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    recovered = Store(
+        state_path=tmp_path / "recovered/users.json",
+        authorize_path=store.authorize_path,
+        backup_dir=tmp_path / "recovered-backups",
+        lock_path=tmp_path / "recovered-lock",
+        duo_config_path=store.duo_config_path,
+        admin_path=store.admin_path,
+        audit_path=store.audit_path,
+        auth_events_path=store.auth_events_path,
+        certificate_path=store.certificate_path,
+        enrollment_path=store.enrollment_path,
+        invitation_path=store.invitation_path,
+        duo_enroll_config_path=store.duo_enroll_config_path,
+        custom_dacl_enabled=True,
+        runner=Runner(),
+    )
+    recovered.bootstrap()
+    users = {user["username"]: user for user in recovered.load()["users"]}
+    assert users["restricted-user"]["access_policy"] == clean_access_policy(custom_policy())
+
+
+def test_invitation_keeps_custom_access_policy(store: Store) -> None:
+    enable_custom_access(store)
+    invitation = store.invite_create(
+        "invited-user",
+        "person@example.test",
+        False,
+        valid_hours=24,
+        access_policy=custom_policy(),
+    )
+    status = store.invite_status(invitation["token"])
+    assert status["access_policy"]["mode"] == "custom"
+    store.invite_accept(invitation["token"], "a-new-invited-password-2026")
+    user = next(user for user in store.load()["users"] if user["username"] == "invited-user")
+    assert user["access_policy"]["mode"] == "custom"
+
+
+def test_version_two_invitation_requires_explicit_access_policy(store: Store) -> None:
+    invitation = store.invite_create(
+        "invited-user", "person@example.test", True, valid_hours=24
+    )
+    data = json.loads(store.invitation_path.read_text())
+    assert data["version"] == 2
+    data["invitations"][0].pop("access_policy")
+    store.invitation_path.write_text(json.dumps(data))
+
+    with pytest.raises(AdminError, match="missing its access policy"):
+        store.invite_status(invitation["token"])
+
+
+def test_legacy_invitation_migrates_to_full_access(store: Store) -> None:
+    invitation = store.invite_create(
+        "invited-user", "person@example.test", True, valid_hours=24
+    )
+    data = json.loads(store.invitation_path.read_text())
+    data["version"] = 1
+    data["invitations"][0].pop("access_policy")
+    store.invitation_path.write_text(json.dumps(data))
+
+    status = store.invite_status(invitation["token"])
+    assert status["access_policy"] == {"mode": "full", "rules": []}

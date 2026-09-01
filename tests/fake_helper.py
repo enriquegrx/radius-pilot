@@ -10,7 +10,27 @@ elif sys.argv[1] == "list":
         json.dumps(
             {
                 "ok": True,
-                "users": [],
+                "users": [
+                    {
+                        "username": "demo-user",
+                        "enabled": True,
+                        "effective_enabled": True,
+                        "duo_required": True,
+                        "effective_duo_required": True,
+                        "duo_bypass_until": None,
+                        "duo_bypass_reason": "",
+                        "duo_enrollment_active": True,
+                        "expires_at": None,
+                        "panel_access": True,
+                        "credential_scheme": "nt-hash",
+                        "access_policy": {"mode": "full", "rules": []},
+                        "access_summary": "Full access",
+                        "custom_access_eligible": True,
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                        "last_auth": None,
+                    }
+                ],
                 "health": {
                     "active": True,
                     "config_valid": True,
@@ -19,6 +39,10 @@ elif sys.argv[1] == "list":
                     "certificate": {"valid": True, "days_remaining": 89},
                     "last_backup": None,
                     "disk_free_mb": 4096,
+                },
+                "access_policy": {
+                    "custom_enabled": True,
+                    "allowed_destinations": ["192.0.2.0/24"],
                 },
             }
         )

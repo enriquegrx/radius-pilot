@@ -6,6 +6,15 @@ RADIUS_ADMIN_ALLOWED_HOSTS=radius.your-domain.com,127.0.0.1,localhost
 RADIUS_ADMIN_ORGANIZATION=Your Organization
 RADIUS_ADMIN_AUTHORIZE_PATH=/etc/freeradius/3.0/mods-config/files/vpn-users/authorize
 
+# Restrict custom rules to destinations owned by this VPN. Downloadable ACLs
+# stay disabled until the exact IOS XE platform has passed a real deny test and
+# Duo's [radius_client] forwards Cisco-AVPair.
+RADIUS_ADMIN_POLICY_DESTINATIONS=192.0.2.0/24,198.51.100.0/24
+RADIUS_ADMIN_CUSTOM_DACL_ENABLED=0
+# Never assign Custom access to these router-local break-glass usernames: a
+# RADIUS outage would authenticate them locally without downloaded attributes.
+RADIUS_ADMIN_LOCAL_FALLBACK_USERS=router-break-glass
+
 # Optional SMTP delivery for one-time invitations. Without this block, the
 # panel displays each invitation once so an administrator can copy it.
 RADIUS_ADMIN_SMTP_HOST=smtp.your-domain.com

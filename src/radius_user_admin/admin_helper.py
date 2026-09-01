@@ -26,12 +26,26 @@ from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 
+from radius_user_admin.access_policy import (
+    DEFAULT_ALLOWED_DESTINATIONS,
+    AccessPolicyError,
+    access_summary,
+    allowed_destinations,
+    cisco_avpairs,
+    clean_access_policy,
+    full_access_policy,
+)
+
 USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
 CLEAR_AUTHORIZE_LINE = re.compile(
     r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
 )
 NT_AUTHORIZE_LINE = re.compile(
     r"^([a-z0-9][a-z0-9._@-]{0,63})\s+NT-Password\s*:=\s*0x([0-9a-fA-F]{32})\s*$"
+)
+ACCESS_POLICY_LINE = re.compile(r"^# Access-Policy: ([A-Za-z0-9_-]+)$")
+CISCO_AVPAIR_LINE = re.compile(
+    r'^\s+Cisco-AVPair\s*\+=\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$'
 )
 OPERATIONS = {
     "bootstrap",
@@ -41,6 +55,7 @@ OPERATIONS = {
     "reset-password",
     "set-enabled",
     "set-duo",
+    "set-access-policy",
     "set-expiry",
     "delete",
     "sync",
@@ -215,6 +230,22 @@ def clean_admin_username(value: object) -> str:
     return username
 
 
+def encode_access_policy(value: dict[str, Any]) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def decode_access_policy(value: str) -> object:
+    if not value or len(value) > 8192:
+        raise AdminError("The generated access policy metadata is invalid.")
+    padding = "=" * (-len(value) % 4)
+    try:
+        payload = base64.b64decode(value + padding, altchars=b"-_", validate=True)
+        return json.loads(payload)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AdminError("The generated access policy metadata is invalid.") from exc
+
+
 class Store:
     def __init__(
         self,
@@ -230,6 +261,9 @@ class Store:
         enrollment_path: Path = Path("/var/lib/radius-user-admin/duo-enrollments.json"),
         invitation_path: Path = Path("/var/lib/radius-user-admin/invitations.json"),
         duo_enroll_config_path: Path = Path("/etc/radius-user-admin/duo-enroll-api.json"),
+        policy_destinations: str | None = None,
+        local_fallback_users: str | None = None,
+        custom_dacl_enabled: bool | None = None,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
         self.state_path = state_path
@@ -244,12 +278,47 @@ class Store:
         self.enrollment_path = enrollment_path
         self.invitation_path = invitation_path
         self.duo_enroll_config_path = duo_enroll_config_path
+        if policy_destinations is None:
+            policy_destinations = runtime_setting(
+                "RADIUS_ADMIN_POLICY_DESTINATIONS", DEFAULT_ALLOWED_DESTINATIONS
+            )
+        try:
+            self.policy_destinations = allowed_destinations(policy_destinations)
+        except AccessPolicyError as exc:
+            raise AdminError(str(exc)) from exc
+        if local_fallback_users is None:
+            local_fallback_users = runtime_setting(
+                "RADIUS_ADMIN_LOCAL_FALLBACK_USERS", ""
+            )
+        self.local_fallback_users = frozenset(
+            clean_username(item)
+            for item in local_fallback_users.split(",")
+            if item.strip()
+        )
+        if custom_dacl_enabled is None:
+            custom_dacl_enabled = runtime_setting(
+                "RADIUS_ADMIN_CUSTOM_DACL_ENABLED", "0"
+            ).casefold() in {"1", "true", "yes", "on"}
+        self.custom_dacl_enabled = custom_dacl_enabled
         self.runner = runner
 
     def bootstrap(self) -> None:
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                self._bootstrap_locked()
+            except (AdminError, AccessPolicyError, OSError, json.JSONDecodeError):
+                if self.authorize_path.exists():
+                    self._fail_closed_authorize()
+                raise
+
+    def _bootstrap_locked(self) -> None:
         if self.state_path.exists():
             raw = json.loads(self.state_path.read_text())
-            migration_needed = any(
+            if not isinstance(raw, dict):
+                raise AdminError("User state has an unsupported format.")
+            migration_needed = raw.get("version") != 3 or any(
                 any(
                     field not in user
                     for field in (
@@ -257,53 +326,100 @@ class Store:
                         "expires_at",
                         "duo_bypass_until",
                         "duo_bypass_reason",
+                        "access_policy",
                     )
                 )
                 for user in raw.get("users", [])
             )
             data = self.load()
             if migration_needed:
+                data["version"] = 3
                 self._atomic_json(data)
+            self._reconcile_locked()
             return
-        users = []
+        users: list[dict[str, Any]] = []
+        current_user: dict[str, Any] | None = None
+        current_avpairs: list[str] = []
+        pending_policy: object = None
+
+        def finish_user() -> None:
+            nonlocal current_user, current_avpairs
+            if current_user is None:
+                return
+            expected = cisco_avpairs(
+                current_user["access_policy"],
+                destination_allowlist=self.policy_destinations,
+            )
+            if current_avpairs != expected:
+                raise AdminError("The existing authorize file contains unmanaged attributes.")
+            users.append(current_user)
+            current_user = None
+            current_avpairs = []
+
         for line in self.authorize_path.read_text().splitlines():
             stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
+            if not stripped:
+                continue
+            policy_match = ACCESS_POLICY_LINE.fullmatch(stripped)
+            if policy_match:
+                finish_user()
+                pending_policy = decode_access_policy(policy_match.group(1))
+                continue
+            if stripped.startswith("#"):
                 continue
             clear_match = CLEAR_AUTHORIZE_LINE.fullmatch(stripped)
             nt_match = NT_AUTHORIZE_LINE.fullmatch(stripped)
+            avpair_match = CISCO_AVPAIR_LINE.fullmatch(line)
+            if avpair_match:
+                if current_user is None:
+                    raise AdminError("The existing authorize file contains an unmanaged entry.")
+                current_avpairs.append(decode_radius(avpair_match.group(1)))
+                continue
             if not clear_match and not nt_match:
                 raise AdminError("The existing authorize file contains an unmanaged entry.")
+            finish_user()
             stamp = now()
             credential = (
                 {"password": decode_radius(clear_match.group(2))}
                 if clear_match
                 else {"nt_password": clean_nt_password(nt_match.group(2))}
             )
-            users.append(
-                {
-                    "username": (clear_match or nt_match).group(1),
-                    **credential,
-                    "enabled": True,
-                    "duo_required": True,
-                    "expires_at": None,
-                    "duo_bypass_until": None,
-                    "duo_bypass_reason": "",
-                    "created_at": stamp,
-                    "updated_at": stamp,
-                }
-            )
+            try:
+                policy = clean_access_policy(
+                    pending_policy,
+                    destination_allowlist=self.policy_destinations,
+                )
+            except AccessPolicyError as exc:
+                raise AdminError(str(exc)) from exc
+            pending_policy = None
+            current_user = {
+                "username": (clear_match or nt_match).group(1),
+                **credential,
+                "enabled": True,
+                "duo_required": True,
+                "expires_at": None,
+                "duo_bypass_until": None,
+                "duo_bypass_reason": "",
+                "access_policy": policy,
+                "created_at": stamp,
+                "updated_at": stamp,
+            }
+        finish_user()
+        if pending_policy is not None:
+            raise AdminError("The existing authorize file contains orphaned policy metadata.")
         if not users:
             raise AdminError("The existing authorize file contains no users.")
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._atomic_json({"version": 2, "users": users})
+        self._atomic_json({"version": 3, "users": users})
+        self._reconcile_locked()
 
     def load(self) -> dict[str, Any]:
         if not self.state_path.exists():
             raise AdminError("User state has not been bootstrapped.")
         data = json.loads(self.state_path.read_text())
-        if data.get("version") not in {1, 2} or not isinstance(data.get("users"), list):
+        if data.get("version") not in {1, 2, 3} or not isinstance(data.get("users"), list):
             raise AdminError("User state has an unsupported format.")
+        legacy = data["version"] in {1, 2}
         for user in data["users"]:
             has_clear = "password" in user
             has_hash = "nt_password" in user
@@ -313,10 +429,40 @@ class Store:
                 clean_password(user["password"])
             else:
                 clean_nt_password(user["nt_password"])
-            user.setdefault("duo_required", True)
-            user.setdefault("expires_at", None)
-            user.setdefault("duo_bypass_until", None)
-            user.setdefault("duo_bypass_reason", "")
+            if legacy:
+                user.setdefault("duo_required", True)
+                user.setdefault("expires_at", None)
+                user.setdefault("duo_bypass_until", None)
+                user.setdefault("duo_bypass_reason", "")
+                user.setdefault("access_policy", full_access_policy())
+            elif any(
+                field not in user
+                for field in (
+                    "duo_required",
+                    "expires_at",
+                    "duo_bypass_until",
+                    "duo_bypass_reason",
+                    "access_policy",
+                )
+            ):
+                raise AdminError("Version 3 user state is missing required security fields.")
+            try:
+                user["access_policy"] = clean_access_policy(
+                    user["access_policy"],
+                    destination_allowlist=self.policy_destinations,
+                )
+            except AccessPolicyError as exc:
+                raise AdminError(str(exc)) from exc
+            try:
+                cisco_avpairs(
+                    user["access_policy"],
+                    destination_allowlist=self.policy_destinations,
+                )
+            except AccessPolicyError as exc:
+                raise AdminError(str(exc)) from exc
+            self._reject_local_fallback_policy(
+                user["username"], user["access_policy"]
+            )
         return data
 
     def public_list(self) -> dict[str, Any]:
@@ -340,6 +486,7 @@ class Store:
                     "expires_at",
                     "duo_bypass_until",
                     "duo_bypass_reason",
+                    "access_policy",
                     "created_at",
                     "updated_at",
                 )
@@ -352,8 +499,22 @@ class Store:
             public["credential_scheme"] = (
                 "nt-hash" if "nt_password" in item else "legacy-cleartext"
             )
+            public["access_summary"] = access_summary(
+                item["access_policy"],
+                destination_allowlist=self.policy_destinations,
+            )
+            public["custom_access_eligible"] = (
+                item["username"] not in self.local_fallback_users
+            )
             users.append(public)
-        return {"users": users, "health": self.health()}
+        return {
+            "users": users,
+            "health": self.health(),
+            "access_policy": {
+                "custom_enabled": self._custom_dacl_ready(),
+                "allowed_destinations": [item.with_prefixlen for item in self.policy_destinations],
+            },
+        }
 
     def invitation_list(self) -> list[dict[str, Any]]:
         current = datetime.now(UTC)
@@ -365,6 +526,10 @@ class Store:
                     "username": invitation["username"],
                     "email": invitation.get("email", ""),
                     "duo_required": bool(invitation["duo_required"]),
+                    "access_summary": access_summary(
+                        invitation["access_policy"],
+                        destination_allowlist=self.policy_destinations,
+                    ),
                     "created_at": invitation["created_at"],
                     "expires_at": invitation["expires_at"],
                     "used_at": invitation.get("used_at"),
@@ -385,10 +550,12 @@ class Store:
         email: object,
         duo_required: object,
         valid_hours: object = 24,
+        access_policy: object = None,
     ) -> dict[str, Any]:
         clean = clean_username(username)
         clean_address = clean_email(email)
         require_duo = self._clean_bool(duo_required, "authentication mode")
+        policy = self._clean_policy_for_assignment(access_policy, username=clean)
         try:
             hours = int(valid_hours)
         except (TypeError, ValueError) as exc:
@@ -415,6 +582,7 @@ class Store:
                     "username": clean,
                     "email": clean_address,
                     "duo_required": require_duo,
+                    "access_policy": policy,
                     "created_at": created.isoformat(timespec="seconds"),
                     "expires_at": expires.isoformat(timespec="seconds"),
                     "used_at": None,
@@ -432,7 +600,13 @@ class Store:
         invitation = self._active_invitation(token)
         return {
             key: invitation[key]
-            for key in ("username", "email", "duo_required", "expires_at")
+            for key in (
+                "username",
+                "email",
+                "duo_required",
+                "access_policy",
+                "expires_at",
+            )
         }
 
     def invite_accept(self, token: object, password: object) -> dict[str, Any]:
@@ -447,6 +621,9 @@ class Store:
             if any(user["username"] == username for user in data["users"]):
                 raise AdminError("That VPN account already exists.")
             stamp = now()
+            access_policy = self._clean_policy_for_assignment(
+                invitation.get("access_policy"), username=username
+            )
             data["users"].append(
                 {
                     "username": username,
@@ -458,11 +635,12 @@ class Store:
                     "duo_bypass_reason": (
                         "" if invitation["duo_required"] else "Invitation bootstrap"
                     ),
+                    "access_policy": access_policy,
                     "created_at": stamp,
                     "updated_at": stamp,
                 }
             )
-            data["version"] = 2
+            data["version"] = 3
             self._commit(data)
             invitation["used_at"] = stamp
             self._write_invitations(invitations)
@@ -501,13 +679,38 @@ class Store:
 
     def _load_invitations(self) -> dict[str, Any]:
         if not self.invitation_path.exists():
-            return {"version": 1, "invitations": []}
+            return {"version": 2, "invitations": []}
         try:
             data = json.loads(self.invitation_path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
             raise AdminError("Invitation state is unavailable.") from exc
-        if data.get("version") != 1 or not isinstance(data.get("invitations"), list):
+        if data.get("version") not in {1, 2} or not isinstance(
+            data.get("invitations"), list
+        ):
             raise AdminError("Invitation state has an unsupported format.")
+        legacy = data["version"] == 1
+        for invitation in data["invitations"]:
+            if legacy:
+                invitation.setdefault("access_policy", full_access_policy())
+            elif "access_policy" not in invitation:
+                raise AdminError(
+                    "Version 2 invitation state is missing its access policy."
+                )
+            try:
+                invitation["access_policy"] = clean_access_policy(
+                    invitation["access_policy"],
+                    destination_allowlist=self.policy_destinations,
+                )
+                cisco_avpairs(
+                    invitation["access_policy"],
+                    destination_allowlist=self.policy_destinations,
+                )
+            except AccessPolicyError as exc:
+                raise AdminError(str(exc)) from exc
+            self._reject_local_fallback_policy(
+                invitation["username"], invitation["access_policy"]
+            )
+        data["version"] = 2
         return data
 
     def _write_invitations(self, data: dict[str, Any]) -> None:
@@ -645,6 +848,9 @@ class Store:
                 )
                 reason = clean_reason(payload.get("duo_bypass_reason"))
                 expires_at = clean_optional_time(payload.get("expires_at"), "account expiry")
+                access_policy = self._clean_policy_for_assignment(
+                    payload.get("access_policy"), username=username
+                )
                 if not duo_required and not reason:
                     raise AdminError("A reason is required for password-only access.")
                 if not duo_required and bypass_until and is_past(bypass_until):
@@ -660,6 +866,7 @@ class Store:
                         "expires_at": expires_at,
                         "duo_bypass_until": None if duo_required else bypass_until,
                         "duo_bypass_reason": "" if duo_required else reason,
+                        "access_policy": access_policy,
                         "created_at": stamp,
                         "updated_at": stamp,
                     }
@@ -684,6 +891,9 @@ class Store:
                     new_username = clean_username(payload.get("new_username"))
                     if any(item["username"] == new_username for item in users):
                         raise AdminError("That username already exists.")
+                    self._reject_local_fallback_policy(
+                        new_username, user["access_policy"]
+                    )
                     user["username"] = new_username
                     user["updated_at"] = now()
                     if username in self.panel_admin_usernames():
@@ -728,6 +938,11 @@ class Store:
                         raise AdminError("The account expiry must be in the future.")
                     user["expires_at"] = expires_at
                     user["updated_at"] = now()
+                elif operation == "set-access-policy":
+                    user["access_policy"] = self._clean_policy_for_assignment(
+                        payload.get("access_policy"), username=username
+                    )
+                    user["updated_at"] = now()
                 elif operation == "delete":
                     if username in self.panel_admin_usernames():
                         raise AdminError("Revoke panel access before deleting this user.")
@@ -739,7 +954,7 @@ class Store:
                 else:
                     raise AdminError("Unsupported operation.")
 
-            data["version"] = 2
+            data["version"] = 3
             self._commit(data, admin_data=admin_data)
 
     def migrate_passwords(self, username: object = None) -> list[str]:
@@ -760,7 +975,7 @@ class Store:
                 migrated.append(user["username"])
             if not migrated:
                 return []
-            data["version"] = 2
+            data["version"] = 3
             self._commit(data)
             return migrated
 
@@ -769,13 +984,58 @@ class Store:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            self._commit(self.load())
+            try:
+                data = self.load()
+            except (AdminError, OSError, json.JSONDecodeError):
+                self._fail_closed_authorize()
+                raise
+            self._commit(data)
 
     def reconcile(self) -> list[str]:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            return self._reconcile_locked()
+            try:
+                return self._reconcile_locked()
+            except (AdminError, OSError, json.JSONDecodeError):
+                self._fail_closed_authorize()
+                raise
+
+    def _fail_closed_authorize(self) -> None:
+        old_authorize = self.authorize_path.read_bytes()
+        emergency = (
+            b"# Emergency fail-closed: RadiusPilot state requires operator review.\n"
+        )
+        if old_authorize == emergency:
+            self._check(
+                ["/usr/bin/systemctl", "is-active", "--quiet", "freeradius"],
+                "FreeRADIUS is not active in fail-closed mode.",
+            )
+            return
+        try:
+            self._atomic_write(
+                self.authorize_path,
+                emergency.decode(),
+                0o640,
+            )
+            os.chown(self.authorize_path, 0, grp.getgrnam("freerad").gr_gid)
+            self._check(
+                ["/usr/sbin/freeradius", "-C", "-l", "stdout"],
+                "FreeRADIUS rejected the fail-closed configuration.",
+            )
+            self._check(
+                ["/usr/bin/systemctl", "restart", "freeradius"],
+                "FreeRADIUS could not enter fail-closed mode.",
+            )
+            self._check(
+                ["/usr/bin/systemctl", "is-active", "--quiet", "freeradius"],
+                "FreeRADIUS is not active in fail-closed mode.",
+            )
+        except Exception:
+            self._atomic_write(self.authorize_path, old_authorize.decode(), 0o640)
+            os.chown(self.authorize_path, 0, grp.getgrnam("freerad").gr_gid)
+            self.runner(["/usr/bin/systemctl", "restart", "freeradius"], check=False)
+            raise
 
     def _reconcile_locked(self) -> list[str]:
         data = self.load()
@@ -791,8 +1051,12 @@ class Store:
                 user["duo_bypass_reason"] = ""
                 user["updated_at"] = now()
                 changes.append(f"expired Duo bypass {user['username']}")
-        if changes:
+        expected_authorize = self._render(data)
+        managed_files_changed = expected_authorize.encode() != self.authorize_path.read_bytes()
+        if changes or managed_files_changed:
             self._commit(data)
+        if managed_files_changed:
+            changes.append("reconciled managed RADIUS authorization")
         return changes
 
     @staticmethod
@@ -817,6 +1081,18 @@ class Store:
         lines = ["# Generated by radius-user-admin. Do not edit by hand."]
         for user in sorted(data["users"], key=lambda item: item["username"]):
             if self._effective_enabled(user):
+                try:
+                    policy = clean_access_policy(
+                        user.get("access_policy"),
+                        destination_allowlist=self.policy_destinations,
+                    )
+                except AccessPolicyError as exc:
+                    raise AdminError(str(exc)) from exc
+                # Fail closed: if Duo can no longer forward the ACL, remove the
+                # restricted account from RADIUS until reconciliation is healthy.
+                if policy["mode"] == "custom" and not self._custom_dacl_ready():
+                    continue
+                lines.append(f"# Access-Policy: {encode_access_policy(policy)}")
                 if "nt_password" in user:
                     password_hash = clean_nt_password(user["nt_password"])
                     lines.append(f'{user["username"]} NT-Password := 0x{password_hash}')
@@ -824,6 +1100,15 @@ class Store:
                     lines.append(
                         f'{user["username"]} Cleartext-Password := '
                         f'"{encode_radius(user["password"])}"'
+                    )
+                attributes = cisco_avpairs(
+                    policy,
+                    destination_allowlist=self.policy_destinations,
+                )
+                for index, attribute in enumerate(attributes):
+                    suffix = "," if index < len(attributes) - 1 else ""
+                    lines.append(
+                        f'    Cisco-AVPair += "{encode_radius(attribute)}"{suffix}'
                     )
         return "\n".join(lines) + "\n"
 
@@ -873,6 +1158,57 @@ class Store:
         insertion = [""] + block
         lines[section_end:section_end] = insertion
         return "\n".join(lines).rstrip() + "\n"
+
+    def _duo_passes_cisco_avpair(self) -> bool:
+        try:
+            section = self._config_section(self.duo_config_path.read_text(), "radius_client")
+        except OSError:
+            return False
+        if section.get("pass_through_all", "").casefold() in {"1", "true", "yes", "on"}:
+            return True
+        names = {
+            item.strip().casefold()
+            for item in section.get("pass_through_attr_names", "").split(",")
+            if item.strip()
+        }
+        return "cisco-avpair" in names
+
+    def _custom_dacl_ready(self) -> bool:
+        return self.custom_dacl_enabled and self._duo_passes_cisco_avpair()
+
+    def _reject_local_fallback_policy(
+        self, username: str, policy: dict[str, Any]
+    ) -> None:
+        if policy["mode"] == "custom" and username in self.local_fallback_users:
+            raise AdminError(
+                "Custom access cannot be assigned to a router-local fallback account."
+            )
+
+    def _clean_policy_for_assignment(
+        self, value: object, *, username: str | None = None
+    ) -> dict[str, Any]:
+        try:
+            policy = clean_access_policy(
+                value,
+                destination_allowlist=self.policy_destinations,
+            )
+        except AccessPolicyError as exc:
+            raise AdminError(str(exc)) from exc
+        try:
+            cisco_avpairs(
+                policy,
+                destination_allowlist=self.policy_destinations,
+            )
+        except AccessPolicyError as exc:
+            raise AdminError(str(exc)) from exc
+        if policy["mode"] == "custom" and not self._custom_dacl_ready():
+            raise AdminError(
+                "Custom access is disabled until Duo attribute forwarding and the IOS XE "
+                "downloadable ACL capability have been validated."
+            )
+        if username is not None:
+            self._reject_local_fallback_policy(username, policy)
+        return policy
 
     def bootstrap_admin(self, username: object, password: object) -> None:
         if self.admin_path.exists():
@@ -1124,8 +1460,9 @@ class Store:
         if not source.is_file():
             raise AdminError("Backup not found.")
         data = json.loads(source.read_text())
-        if data.get("version") not in {1, 2} or not isinstance(data.get("users"), list):
+        if data.get("version") not in {1, 2, 3} or not isinstance(data.get("users"), list):
             raise AdminError("The backup contains unsupported user data.")
+        legacy = data["version"] in {1, 2}
         for user in data["users"]:
             clean_username(user.get("username"))
             has_clear = "password" in user
@@ -1136,10 +1473,26 @@ class Store:
                 clean_password(user.get("password"))
             else:
                 clean_nt_password(user.get("nt_password"))
-            user.setdefault("duo_required", True)
-            user.setdefault("expires_at", None)
-            user.setdefault("duo_bypass_until", None)
-            user.setdefault("duo_bypass_reason", "")
+            if legacy:
+                user.setdefault("duo_required", True)
+                user.setdefault("expires_at", None)
+                user.setdefault("duo_bypass_until", None)
+                user.setdefault("duo_bypass_reason", "")
+                user.setdefault("access_policy", full_access_policy())
+            elif any(
+                field not in user
+                for field in (
+                    "duo_required",
+                    "expires_at",
+                    "duo_bypass_until",
+                    "duo_bypass_reason",
+                    "access_policy",
+                )
+            ):
+                raise AdminError("Version 3 backup is missing required security fields.")
+            user["access_policy"] = self._clean_policy_for_assignment(
+                user["access_policy"], username=user["username"]
+            )
         if not any(self._effective_enabled(user) for user in data["users"]):
             raise AdminError("The backup contains no enabled, unexpired users.")
         admin_source = source.parent / "admins.json"
@@ -1150,6 +1503,7 @@ class Store:
             user_names = {user["username"] for user in data["users"]}
             if any(admin.get("username") not in user_names for admin in admin_data["admins"]):
                 raise AdminError("The backup contains an orphaned panel administrator.")
+        data["version"] = 3
         self._commit(data, admin_data=admin_data)
 
     def duo_check(self, username: object) -> dict[str, Any]:
@@ -1343,25 +1697,26 @@ class Store:
 
     def _commit(self, data: dict[str, Any], *, admin_data: dict[str, Any] | None = None) -> None:
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        destination = self.backup_dir / stamp
-        destination.mkdir(parents=True, exist_ok=False)
         old_state = self.state_path.read_bytes()
         old_authorize = self.authorize_path.read_bytes()
         old_duo = self.duo_config_path.read_bytes()
         old_admin = self.admin_path.read_bytes() if self.admin_path.exists() else None
+        new_authorize = self._render(data)
+        new_duo = self._render_duo(old_duo.decode(), data)
+        duo_changed = new_duo.encode() != old_duo
+        destination = self.backup_dir / stamp
+        destination.mkdir(parents=True, exist_ok=False)
         shutil.copy2(self.state_path, destination / "users.json")
         shutil.copy2(self.authorize_path, destination / "authorize")
         shutil.copy2(self.duo_config_path, destination / "authproxy.cfg")
         if old_admin is not None:
             shutil.copy2(self.admin_path, destination / "admins.json")
-        new_duo = self._render_duo(old_duo.decode(), data)
-        duo_changed = new_duo.encode() != old_duo
-        self._atomic_json(data)
-        self._atomic_write(self.authorize_path, self._render(data), 0o640)
-        if admin_data is not None:
-            self._write_admin_data(admin_data)
         candidate: Path | None = None
         try:
+            self._atomic_json(data)
+            self._atomic_write(self.authorize_path, new_authorize, 0o640)
+            if admin_data is not None:
+                self._write_admin_data(admin_data)
             os.chown(self.authorize_path, 0, grp.getgrnam("freerad").gr_gid)
             if duo_changed:
                 candidate = self.duo_config_path.parent / ".authproxy.cfg.candidate"
@@ -1501,6 +1856,7 @@ def main() -> int:
                     payload.get("email"),
                     payload.get("duo_required"),
                     payload.get("valid_hours", 24),
+                    payload.get("access_policy"),
                 )
             }
         elif args.operation == "invite-list":
@@ -1542,6 +1898,7 @@ def main() -> int:
             "reset-password",
             "set-enabled",
             "set-duo",
+            "set-access-policy",
             "set-expiry",
             "delete",
             "restore",
