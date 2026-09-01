@@ -65,16 +65,7 @@
                       <td>{% if user.enabled %}<span class="badge bg-green-lt">Enabled</span>{% else %}<span class="badge bg-red-lt">Blocked</span>{% endif %}</td>
                       <td class="text-secondary">{{ user.updated_at[:10] }} {{ user.updated_at[11:16] }} UTC</td>
                       <td>
-                        <div class="dropdown">
-                          <button class="btn btn-ghost-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">Manage</button>
-                          <div class="dropdown-menu dropdown-menu-end">
-                            <button class="dropdown-item js-action" data-action="rename" data-user="{{ user.username }}">Rename</button>
-                            <button class="dropdown-item js-action" data-action="password" data-user="{{ user.username }}">Reset password</button>
-                            <div class="dropdown-divider"></div>
-                            <button class="dropdown-item js-action" data-action="status" data-user="{{ user.username }}" data-enabled="{{ 'false' if user.enabled else 'true' }}">{{ 'Block' if user.enabled else 'Unblock' }}</button>
-                            <button class="dropdown-item text-danger js-action" data-action="delete" data-user="{{ user.username }}">Delete</button>
-                          </div>
-                        </div>
+                        <button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}">Manage</button>
                       </td>
                     </tr>
                     {% else %}
@@ -101,7 +92,7 @@
       <div class="modal-dialog modal-dialog-centered"><form class="modal-content" id="action-form" method="post">
         <div class="modal-header"><h2 class="modal-title" id="action-title">Manage user</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
         <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div id="action-description" class="text-secondary mb-3"></div><div id="action-field"></div></div>
-        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="action-submit">Apply change</button></div>
+        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal" id="action-cancel">Close</button><button class="btn btn-primary" id="action-submit" hidden>Apply change</button></div>
       </form></div>
     </div>
 
@@ -109,4 +100,3 @@
     <script src="{{ url_for('static', path='app.js') }}"></script>
   </body>
 </html>
-

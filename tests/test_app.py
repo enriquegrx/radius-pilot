@@ -33,6 +33,8 @@ def test_dashboard_renders_user_without_password(monkeypatch) -> None:
     assert "vpn-test-user" in response.text
     assert "FreeRADIUS healthy" in response.text
     assert "long-enough-password" not in response.text
+    assert "js-manage" in response.text
+    assert "dropdown-menu" not in response.text
 
 
 def test_health_endpoint() -> None:

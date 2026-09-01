@@ -14,9 +14,15 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .table > :not(caption) > * > * { padding-top: 1rem; padding-bottom: 1rem; }
 .btn-primary { background: var(--brand-blue); border-color: var(--brand-blue); }
 .page-body { padding-top: 2rem; }
+.admin-action-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.admin-action { background: #fff; border: 1px solid rgba(98,105,118,.22); border-radius: 10px; color: var(--brand-ink); min-height: 88px; padding: 1rem; text-align: left; transition: border-color .15s ease,box-shadow .15s ease,transform .15s ease; }
+.admin-action span { color: #667085; display: block; font-size: .8125rem; font-weight: 400; margin-top: .25rem; }
+.admin-action:hover,.admin-action:focus-visible { border-color: var(--brand-blue); box-shadow: 0 6px 18px rgba(23,102,177,.12); outline: 0; transform: translateY(-1px); }
+.admin-action-danger { color: #c33232; }
+.admin-action-danger:hover,.admin-action-danger:focus-visible { border-color: #c33232; box-shadow: 0 6px 18px rgba(195,50,50,.1); }
 @media (max-width: 767px) {
   .admin-header .container-xl { align-items: flex-start; flex-direction: column; padding-block: 1rem; }
   .admin-header .container-xl > div:last-child { justify-content: space-between; width: 100%; }
   .page-body { padding-top: 1rem; }
+  .admin-action-grid { grid-template-columns: 1fr; }
 }
-
