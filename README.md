@@ -1,11 +1,16 @@
 # RadiusPilot 🛡️
 
+**Conecta de forma fácil tu Cisco ISR con doble factor de autenticación.**
+
 [![CI](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml)
 
-A small web console for the VPN accounts authenticated by FreeRADIUS at Example Organization.
-It covers the jobs we actually need day to day: see who has access, add an
-account, enrol it in Duo, reset a password, block it, or remove it.
+RadiusPilot puts Duo two-factor authentication in front of the remote access of
+a Cisco ISR router without the usual pain. People connect with AnyConnect over
+IKEv2, the router checks their password against FreeRADIUS, Duo asks for the
+Push, and a small web console keeps the accounts under control: see who has
+access, add an account, enrol it in Duo, reset a password, block it, or remove
+it.
 
 The application runs on `radius01` behind Nginx. FastAPI listens only on
 loopback; Nginx publishes HTTPS to the approved internal and VPN networks. There
@@ -13,11 +18,13 @@ is no WAN NAT, Cloudflare Tunnel, or public admin path.
 
 ## Why it exists 💡
 
-Editing the FreeRADIUS `authorize` file by hand is quick until account state,
-Duo exceptions and emergency access all need to stay in sync. This console
-keeps that workflow simple without turning it into a general-purpose identity
-platform. Routine changes stay within three clicks and every write is validated
-before it reaches the live authentication service.
+Wiring AnyConnect, a Cisco ISR, FreeRADIUS and the Duo Authentication Proxy
+together is well documented but genuinely fiddly, and once it works you still
+have to run it. Editing the FreeRADIUS `authorize` file by hand is quick until
+account state, Duo exceptions and emergency access all need to stay in sync.
+This console keeps that workflow simple without turning it into a
+general-purpose identity platform. Routine changes stay within three clicks and
+every write is validated before it reaches the live authentication service.
 
 ## What it does 🧭
 
