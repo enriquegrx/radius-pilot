@@ -1,10 +1,10 @@
 # RadiusPilot 🛡️
 
-**Conecta de forma fácil tu Cisco ISR con doble factor de autenticación.**
+**Two-factor authentication for your Cisco ISR, the easy way.**
 
-¿Te has planteado alguna vez proteger el acceso por consola o VPN de tu Cisco
-ISR con doble factor de autenticación y no has sabido cómo? Este proyecto te lo
-hace fácil.
+Ever wanted to put two-factor authentication in front of your Cisco ISR's
+console or VPN access, but never found a setup that just works? This project
+makes it easy.
 
 [![CI](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml)
