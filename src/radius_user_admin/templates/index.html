@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
     <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-6">
   </head>
-  <body data-custom-access-enabled="{{ 'true' if custom_access_enabled else 'false' }}">
+  <body data-custom-access-enabled="{{ 'true' if custom_access_enabled else 'false' }}" data-access-objects="{{ access_objects | map(attribute='name') | list | tojson | forceescape }}">
     <div class="page">
       <header class="navbar navbar-expand-md d-print-none admin-header">
         <div class="container-xl">
@@ -75,7 +75,7 @@
                     <div class="user-detail-access"><div class="detail-label">Network access</div>
                       <div class="detail-value">{% if user.access_policy.mode == 'custom' %}<span class="badge bg-purple-lt">{{ user.access_summary }}</span>{% else %}<span class="text-secondary">Full VPN access — the gateway's normal group policy applies.</span>{% endif %}<button type="button" class="btn btn-outline-secondary btn-sm" data-row-action="access">Edit access</button></div>
                       {% if user.access_policy.mode == 'custom' %}
-                      <ul class="detail-rules mt-2">{% for rule in user.access_policy.rules %}<li><code>{{ rule.destination }}</code> · {{ rule.protocol | upper }}{% if rule.ports %} · {% for range in rule.ports %}{{ range[0] }}{% if range[0] != range[1] %}-{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</li>{% endfor %}</ul>
+                      <ul class="detail-rules mt-2">{% for rule in user.access_policy.rules %}<li>{% if rule.object %}<span class="badge bg-cyan-lt">{{ rule.object }}</span> <span class="text-secondary small">saved object</span>{% else %}<code>{{ rule.destination }}</code> · {{ rule.protocol | upper }}{% if rule.ports %} · {% for range in rule.ports %}{{ range[0] }}{% if range[0] != range[1] %}-{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% endif %}</li>{% endfor %}</ul>
                       {% if user.access_avpairs %}<div class="detail-label mt-2">Compiled RADIUS reply (what the gateway applies)</div><pre class="detail-acl">{{ user.access_avpairs | join('\n') }}</pre>{% endif %}
                       {% endif %}
                     </div>
@@ -94,6 +94,23 @@
               </tbody></table></div>
             </div>
             {% endif %}
+            <div class="card mt-3">
+              <div class="card-header user-card-header">
+                <div><h3 class="card-title mb-1">Access objects</h3><div class="text-secondary small">Reusable destinations and services. Edits propagate to every policy that references the object.</div></div>
+                <button class="btn btn-outline-primary btn-sm" type="button" id="add-access-object" {% if not custom_access_enabled %}disabled title="Enable custom access first"{% endif %}>Add object</button>
+              </div>
+              <div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Name</th><th>Description</th><th>Contents</th><th>Used by</th><th class="w-1"></th></tr></thead><tbody>
+                {% for object in access_objects %}
+                <tr>
+                  <td><code>{{ object.name }}</code></td>
+                  <td class="text-secondary">{{ object.description or '—' }}</td>
+                  <td><span class="badge bg-purple-lt">{{ object.summary }}</span><div class="small text-secondary mt-1">{% for entry in object.rules %}{% if entry.object %}<span class="badge bg-cyan-lt">{{ entry.object }}</span>{% else %}{{ entry.destination }} {{ entry.protocol }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div></td>
+                  <td>{% if object.used_by %}<span class="badge bg-blue-lt">{{ object.used_by }}</span>{% else %}<span class="text-secondary">0</span>{% endif %}</td>
+                  <td class="text-end text-nowrap"><button type="button" class="btn btn-outline-secondary btn-sm js-object-edit" data-name="{{ object.name }}" data-description="{{ object.description }}" data-rules="{{ object.rules | tojson | forceescape }}">Edit</button> <button type="button" class="btn btn-outline-danger btn-sm js-object-delete" data-name="{{ object.name }}" {% if object.used_by %}disabled title="Still referenced by {{ object.used_by }} polic{{ 'y' if object.used_by == 1 else 'ies' }}"{% endif %}>Delete</button></td>
+                </tr>
+                {% else %}<tr><td colspan="5" class="text-secondary py-4">No saved objects yet. Create one to reuse destinations and services across users.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </div>
           </section>
 
           <section id="activity" class="console-section">
@@ -126,7 +143,7 @@
         <div class="duo-bypass-fields" hidden><div class="mb-3"><label class="form-label" for="create-bypass-reason">Reason for exception</label><input class="form-control" id="create-bypass-reason" name="duo_bypass_reason" maxlength="160"></div><div class="mb-3"><label class="form-label" for="create-bypass-until">Return to Duo automatically</label><input class="form-control" id="create-bypass-until" name="duo_bypass_until" type="datetime-local"><small class="form-hint">Leave empty only for a deliberate permanent exception.</small></div></div>
         <div class="mb-3 js-access-editor" data-initial-policy="{{ {'mode': 'full', 'rules': []} | tojson | forceescape }}">
           <label class="form-label" for="create-access-mode">Network access</label><select class="form-select js-access-mode" id="create-access-mode" name="access_mode"><option value="full" selected>Full VPN access</option><option value="custom" {% if not custom_access_enabled %}disabled{% endif %}>Custom destinations and services</option></select>
-          <input type="hidden" name="access_rules" value="[]" class="js-access-rules"><div class="access-custom mt-3" hidden><div class="js-access-rule-list"></div><button class="btn btn-outline-primary btn-sm js-add-access-rule" type="button">Add destination</button><small class="form-hint d-block mt-2">Rules are enforced after the next VPN connection. Allowed ranges: {{ allowed_policy_destinations | join(', ') }}.</small></div>
+          <input type="hidden" name="access_rules" value="[]" class="js-access-rules"><div class="access-custom mt-3" hidden><div class="js-access-rule-list"></div><button class="btn btn-outline-primary btn-sm js-add-access-rule" type="button">Add destination</button> <button class="btn btn-outline-primary btn-sm js-add-access-ref" type="button">Add saved object</button><small class="form-hint d-block mt-2">Rules are enforced after the next VPN connection. Allowed ranges: {{ allowed_policy_destinations | join(', ') }}.</small></div>
         </div>
         <div class="mb-3"><label class="form-label" for="create-expiry">Account expiry</label><input class="form-control" id="create-expiry" name="expires_at" type="datetime-local"><small class="form-hint">Optional. The account is blocked automatically after this time.</small></div>
         <div><label class="form-label" for="create-panel-access">Panel role</label><select class="form-select js-panel-role" id="create-panel-access" name="panel_access"><option value="false" selected>VPN user only</option><option value="true">VPN user + panel administrator</option></select><small class="form-hint">Panel administrators always approve Duo after their separate console password.</small></div>
@@ -141,7 +158,7 @@
         <div class="mb-3"><label class="form-label" for="invite-username">Username</label><input class="form-control" id="invite-username" name="username" required maxlength="64" pattern="[a-z0-9][a-z0-9._@-]{0,63}" autocomplete="off"></div>
         <div class="mb-3"><label class="form-label" for="invite-email">Email</label><input class="form-control" id="invite-email" name="email" type="email" maxlength="254" autocomplete="email"><small class="form-hint">Optional. Without SMTP, the link is shown once for manual delivery.</small></div>
         <div class="mb-3"><label class="form-label" for="invite-duo">Authentication</label><select class="form-select" id="invite-duo" name="duo_required"><option value="true" selected>Password + Duo Push</option><option value="false">Password only</option></select></div>
-        <div class="mb-3 js-access-editor" data-initial-policy="{{ {'mode': 'full', 'rules': []} | tojson | forceescape }}"><label class="form-label" for="invite-access-mode">Network access</label><select class="form-select js-access-mode" id="invite-access-mode" name="access_mode"><option value="full" selected>Full VPN access</option><option value="custom" {% if not custom_access_enabled %}disabled{% endif %}>Custom destinations and services</option></select><input type="hidden" name="access_rules" value="[]" class="js-access-rules"><div class="access-custom mt-3" hidden><div class="js-access-rule-list"></div><button class="btn btn-outline-primary btn-sm js-add-access-rule" type="button">Add destination</button></div></div>
+        <div class="mb-3 js-access-editor" data-initial-policy="{{ {'mode': 'full', 'rules': []} | tojson | forceescape }}"><label class="form-label" for="invite-access-mode">Network access</label><select class="form-select js-access-mode" id="invite-access-mode" name="access_mode"><option value="full" selected>Full VPN access</option><option value="custom" {% if not custom_access_enabled %}disabled{% endif %}>Custom destinations and services</option></select><input type="hidden" name="access_rules" value="[]" class="js-access-rules"><div class="access-custom mt-3" hidden><div class="js-access-rule-list"></div><button class="btn btn-outline-primary btn-sm js-add-access-rule" type="button">Add destination</button> <button class="btn btn-outline-primary btn-sm js-add-access-ref" type="button">Add saved object</button></div></div>
         <div><label class="form-label" for="invite-hours">Link lifetime</label><select class="form-select" id="invite-hours" name="valid_hours"><option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select></div>
       </div>
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-primary">Create invitation</button></div>
@@ -157,6 +174,23 @@
       <div class="modal-header"><h2 class="modal-title" id="restore-title">Restore configuration?</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
       <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><p>This replaces the user state with <code id="restore-name"></code>. The current state is backed up first and both authentication services must validate.</p><label class="form-label" for="restore-confirm">Type RESTORE to continue</label><input class="form-control" id="restore-confirm" required pattern="RESTORE" autocomplete="off"></div>
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-warning">Restore backup</button></div>
+    </form></dialog>
+
+    <dialog class="admin-dialog" id="object-modal" aria-labelledby="object-title"><form class="modal-content" method="post" action="/access-objects">
+      <div class="modal-header"><h2 class="modal-title" id="object-title">Access object</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
+      <div class="modal-body">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="object_rules" value="[]" class="js-object-rules">
+        <div class="mb-3"><label class="form-label" for="object-name">Name</label><input class="form-control" id="object-name" name="name" required maxlength="32" pattern="[a-z0-9][a-z0-9._-]{0,31}" autocomplete="off"><small class="form-hint">Lowercase letters, digits, dots, dashes and underscores. The name cannot be changed later.</small></div>
+        <div class="mb-3"><label class="form-label" for="object-description">Description</label><input class="form-control" id="object-description" name="description" maxlength="120" autocomplete="off"><small class="form-hint">Optional. Shown in the object list.</small></div>
+        <div class="access-custom"><div class="js-object-entry-list"></div><div class="d-flex gap-2 mt-1"><button class="btn btn-outline-primary btn-sm js-object-add-rule" type="button">Add destination</button><button class="btn btn-outline-primary btn-sm js-object-add-ref" type="button">Add nested object</button></div><small class="form-hint d-block mt-2">Saving revalidates every user, invitation and object that references this object; the change is rejected if it breaks any of them.</small></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-primary">Save object</button></div>
+    </form></dialog>
+
+    <dialog class="admin-dialog" id="object-delete-modal" aria-labelledby="object-delete-title"><form class="modal-content" id="object-delete-form" method="post">
+      <div class="modal-header"><h2 class="modal-title" id="object-delete-title">Delete access object?</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
+      <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><p>This permanently removes <code id="object-delete-name"></code>. Deletion is refused while any user, invitation or object still references it.</p></div>
+      <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-danger">Delete object</button></div>
     </form></dialog>
 
     <script src="{{ url_for('static', path='app.js') }}?v=20260901-10"></script>

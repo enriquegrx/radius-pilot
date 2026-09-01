@@ -91,6 +91,21 @@ def fake_helper(operation: str, _payload=None):
         "access_policy": {
             "custom_enabled": False,
             "allowed_destinations": ["192.0.2.0/24"],
+            "objects": [
+                {
+                    "name": "core-dns",
+                    "description": "Internal resolvers",
+                    "rules": [
+                        {
+                            "destination": "192.0.2.53/32",
+                            "protocol": "udp",
+                            "ports": [[53, 53]],
+                        }
+                    ],
+                    "summary": "Custom · 1 destination · 1 service",
+                    "used_by": 2,
+                }
+            ],
         },
     }
 
@@ -132,6 +147,53 @@ def test_dashboard_shows_expandable_details_and_expiry_warning(monkeypatch) -> N
     assert "Legacy password" in response.text
     assert "deny ip any any" in response.text
     assert 'data-copy-text="acl-user"' in response.text
+    assert "Access objects" in response.text
+    assert "core-dns" in response.text
+    assert "js-object-edit" in response.text
+
+
+def test_access_object_endpoints_forward_payloads(monkeypatch) -> None:
+    mutations = []
+
+    def recording_helper(operation: str, payload=None):
+        if operation in ("object-set", "object-delete"):
+            mutations.append((operation, payload))
+            return {"ok": True}
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", recording_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/access-objects",
+        data={
+            "csrf": csrf,
+            "name": "core-dns",
+            "description": "Internal resolvers",
+            "object_rules": (
+                '[{"destination":"192.0.2.53","protocol":"udp","ports":"53"},'
+                '{"object":"other"}]'
+            ),
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    delete = client.post(
+        "/access-objects/core-dns/delete", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert delete.status_code == 303
+    assert mutations[0][0] == "object-set"
+    assert mutations[0][1]["name"] == "core-dns"
+    assert mutations[0][1]["rules"][1] == {"object": "other"}
+    assert mutations[1][0] == "object-delete"
+    assert mutations[1][1]["name"] == "core-dns"
 
 
 def test_access_policy_endpoint_forwards_valid_rules(monkeypatch) -> None:

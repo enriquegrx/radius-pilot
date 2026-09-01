@@ -71,6 +71,10 @@ policies to individual VPN users.
   browser rendering.
 - Existing users migrate to full access. Unknown or corrupt policies fail
   closed and must never fall back silently to full access.
+- Saved access objects are validated like inline rules. An edit must be
+  revalidated against every referencing user, invitation, and object before it
+  is accepted; deletion is refused while references remain; reference loops and
+  unknown references fail closed.
 - Restores may only use exact helper-created backup identifiers. Always create a
   new backup and validate both authentication services before accepting one.
 - Prevent blocking or deleting the final enabled user.

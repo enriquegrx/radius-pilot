@@ -44,6 +44,21 @@ elif sys.argv[1] == "list":
                 "access_policy": {
                     "custom_enabled": True,
                     "allowed_destinations": ["192.0.2.0/24"],
+                    "objects": [
+                        {
+                            "name": "core-dns",
+                            "description": "Internal resolvers",
+                            "rules": [
+                                {
+                                    "destination": "192.0.2.53/32",
+                                    "protocol": "udp",
+                                    "ports": [[53, 53]],
+                                }
+                            ],
+                            "summary": "Custom · 1 destination · 1 service",
+                            "used_by": 0,
+                        }
+                    ],
                 },
             }
         )

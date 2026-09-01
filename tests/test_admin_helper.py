@@ -647,6 +647,147 @@ def test_access_policy_rejects_radius_reply_larger_than_udp_budget() -> None:
         cisco_avpairs(policy)
 
 
+def test_access_object_lifecycle_with_nesting(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "web",
+            "description": "Web ports",
+            "rules": [{"destination": "192.168.50.20", "protocol": "tcp", "ports": "80,443"}],
+        },
+    )
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "stack",
+            "rules": [
+                {"object": "web"},
+                {"destination": "192.168.50.21", "protocol": "icmp", "ports": ""},
+            ],
+        },
+    )
+    store.mutate(
+        "set-access-policy",
+        {
+            "username": "vpn-test-user",
+            "access_policy": {"mode": "custom", "rules": [{"object": "stack"}]},
+        },
+    )
+    public = store.public_list()
+    objects = {item["name"]: item for item in public["access_policy"]["objects"]}
+    assert objects["web"]["used_by"] == 1
+    assert objects["stack"]["used_by"] == 1
+    user = next(u for u in public["users"] if u["username"] == "vpn-test-user")
+    assert user["access_policy"]["rules"] == [{"object": "stack"}]
+    assert user["access_avpairs"][-1].endswith("deny ip any any")
+    assert any("192.168.50.20" in item for item in user["access_avpairs"])
+    authorize = store.authorize_path.read_text()
+    assert "192.168.50.20" in authorize
+    assert "192.168.50.21" in authorize
+
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "web",
+            "description": "Web ports",
+            "rules": [{"destination": "192.168.50.30", "protocol": "tcp", "ports": "443"}],
+        },
+    )
+    authorize = store.authorize_path.read_text()
+    assert "192.168.50.30" in authorize
+    assert "192.168.50.20" not in authorize
+
+
+def test_access_object_cycle_is_rejected(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "alpha",
+            "rules": [{"destination": "192.168.50.20", "protocol": "ip", "ports": ""}],
+        },
+    )
+    store.mutate_objects(
+        "object-set", {"name": "beta", "rules": [{"object": "alpha"}]}
+    )
+    with pytest.raises(AdminError, match="loop"):
+        store.mutate_objects(
+            "object-set", {"name": "alpha", "rules": [{"object": "beta"}]}
+        )
+
+
+def test_access_object_delete_refused_while_referenced(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "web",
+            "rules": [{"destination": "192.168.50.20", "protocol": "tcp", "ports": "443"}],
+        },
+    )
+    store.mutate_objects(
+        "object-set", {"name": "stack", "rules": [{"object": "web"}]}
+    )
+    store.mutate(
+        "set-access-policy",
+        {
+            "username": "vpn-test-user",
+            "access_policy": {"mode": "custom", "rules": [{"object": "stack"}]},
+        },
+    )
+    with pytest.raises(AdminError, match="stack"):
+        store.mutate_objects("object-delete", {"name": "web"})
+    with pytest.raises(AdminError, match="vpn-test-user"):
+        store.mutate_objects("object-delete", {"name": "stack"})
+    store.mutate(
+        "set-access-policy",
+        {
+            "username": "vpn-test-user",
+            "access_policy": {"mode": "full", "rules": []},
+        },
+    )
+    store.mutate_objects("object-delete", {"name": "stack"})
+    store.mutate_objects("object-delete", {"name": "web"})
+    assert store.public_list()["access_policy"]["objects"] == []
+
+
+def test_access_object_edit_that_breaks_a_user_is_rejected(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "small",
+            "rules": [{"destination": "192.168.50.20", "protocol": "tcp", "ports": "443"}],
+        },
+    )
+    store.mutate(
+        "set-access-policy",
+        {
+            "username": "vpn-test-user",
+            "access_policy": {"mode": "custom", "rules": [{"object": "small"}]},
+        },
+    )
+    oversized = [
+        {"destination": f"192.168.50.{host}", "protocol": "tcp", "ports": "80,443,8443"}
+        for host in range(20, 41)
+    ]
+    with pytest.raises(AdminError, match="vpn-test-user"):
+        store.mutate_objects("object-set", {"name": "small", "rules": oversized})
+
+
+def test_state_with_unknown_object_reference_fails_closed(store: Store) -> None:
+    data = json.loads(store.state_path.read_text())
+    data["users"][0]["access_policy"] = {
+        "mode": "custom",
+        "rules": [{"object": "ghost"}],
+    }
+    store.state_path.write_text(json.dumps(data))
+
+    with pytest.raises(AdminError, match="unknown saved object"):
+        store.load()
+
+
 def test_public_list_includes_compiled_avpairs(store: Store) -> None:
     enable_custom_access(store)
     store.mutate(

@@ -31,6 +31,9 @@ before it reaches the live authentication service.
 - Switches each enabled account between password plus Duo Push and password only.
 - Gives each VPN account either the normal full-access profile or a custom
   allowlist of IPv4 destinations, protocols, and ports.
+- Stores reusable, nestable access objects so common destinations and services
+  are defined once and referenced from many policies; edits propagate and are
+  revalidated against every referencing policy before they are accepted.
 - Protects the console with a separate scrypt-hashed administrator password,
   Duo Push, a 30-minute idle timeout, CSRF protection, and login rate limiting.
 - Assigns panel access as an explicit per-user role. A panel administrator keeps
@@ -236,6 +239,19 @@ rebuilding the rules.
 Policy changes apply to newly authenticated sessions. An already connected user
 must disconnect and reconnect before a new ACL or route set takes effect. The
 same reconnect rule applies when changing an account back to full access.
+
+#### Reusable access objects
+
+A saved access object is a named list of rules and, optionally, references to
+other objects; a policy may mix inline rules with object references. Editing an
+object propagates on the next `authorize` regeneration to every policy that
+references it, and the edit is first revalidated against every referencing
+user, invitation, and object — including the RADIUS reply budget — so a change
+that would break any of them is rejected whole with the affected name. Deleting
+an object is refused while anything still references it. Reference loops and
+nesting deeper than eight levels are rejected, an unknown reference fails
+closed, and the generated `authorize` file always records the resolved concrete
+rules so disaster-recovery bootstrap never depends on the object store.
 
 ### Password migration
 

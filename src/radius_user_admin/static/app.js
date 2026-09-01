@@ -118,7 +118,15 @@
   });
 
   const customAccessEnabled = document.body.dataset.customAccessEnabled === "true";
-  const accessEditorMarkup = () => `<label class="form-label">Network access</label><select class="form-select js-access-mode" name="access_mode"><option value="full">Full VPN access</option><option value="custom" ${customAccessEnabled ? "" : "disabled"}>Custom destinations and services</option></select><input type="hidden" name="access_rules" value="[]" class="js-access-rules"><div class="access-custom mt-3" hidden><div class="js-access-rule-list"></div><button class="btn btn-outline-primary btn-sm js-add-access-rule" type="button">Add destination</button><small class="form-hint d-block mt-2">The policy is applied on the next VPN connection. Routes shown by the client are not the security boundary.</small></div>`;
+  let availableAccessObjects = [];
+  try { availableAccessObjects = JSON.parse(document.body.dataset.accessObjects || "[]"); } catch (_error) { /* server validation remains authoritative */ }
+  const accessRefMarkup = (selected = "", exclude = "") => {
+    let names = availableAccessObjects.filter((name) => name !== exclude);
+    if (selected && !names.includes(selected)) names = [selected, ...names];
+    const options = names.map((name) => `<option value="${escapeHtml(name)}" ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+    return `<div class="access-rule access-ref"><div><label class="form-label">Saved object</label><select class="form-select js-ref-name">${options}</select></div><button type="button" class="btn btn-ghost-danger js-remove-access-rule" aria-label="Remove saved object">Remove</button></div>`;
+  };
+  const accessEditorMarkup = () => `<label class="form-label">Network access</label><select class="form-select js-access-mode" name="access_mode"><option value="full">Full VPN access</option><option value="custom" ${customAccessEnabled ? "" : "disabled"}>Custom destinations and services</option></select><input type="hidden" name="access_rules" value="[]" class="js-access-rules"><div class="access-custom mt-3" hidden><div class="js-access-rule-list"></div><button class="btn btn-outline-primary btn-sm js-add-access-rule" type="button">Add destination</button> <button class="btn btn-outline-primary btn-sm js-add-access-ref" type="button">Add saved object</button><small class="form-hint d-block mt-2">The policy is applied on the next VPN connection. Routes shown by the client are not the security boundary.</small></div>`;
   const portText = (ports) => (ports || []).map(([start, end]) => start === end ? String(start) : `${start}-${end}`).join(", ");
   const accessRuleMarkup = (rule = {}) => `<div class="access-rule"><div><label class="form-label">Destination</label><input class="form-control js-rule-destination" placeholder="192.0.2.50 or 192.0.2.0/24" value="${escapeHtml(rule.destination || "")}" maxlength="43" required></div><div><label class="form-label">Protocol</label><select class="form-select js-rule-protocol"><option value="tcp" ${rule.protocol === "tcp" || !rule.protocol ? "selected" : ""}>TCP</option><option value="udp" ${rule.protocol === "udp" ? "selected" : ""}>UDP</option><option value="icmp" ${rule.protocol === "icmp" ? "selected" : ""}>ICMP</option><option value="ip" ${rule.protocol === "ip" ? "selected" : ""}>Any IP</option></select></div><div><label class="form-label">Ports</label><input class="form-control js-rule-ports" placeholder="Required: 443, 8000-8010" value="${escapeHtml(portText(rule.ports))}" maxlength="180"></div><button type="button" class="btn btn-ghost-danger js-remove-access-rule" aria-label="Remove rule">Remove</button></div>`;
   const initializeAccessEditor = (editor, initialPolicy = {mode: "full", rules: []}, allowCustom = customAccessEnabled) => {
@@ -128,6 +136,7 @@
     const custom = editor.querySelector(".access-custom");
     const list = editor.querySelector(".js-access-rule-list");
     const add = editor.querySelector(".js-add-access-rule");
+    const addRef = editor.querySelector(".js-add-access-ref");
     const normalized = initialPolicy?.mode === "custom" ? initialPolicy : {mode: "full", rules: []};
     mode.querySelector('option[value="custom"]').disabled = !allowCustom;
     mode.value = normalized.mode;
@@ -148,28 +157,41 @@
       list.insertAdjacentHTML("beforeend", accessRuleMarkup(rule));
       bindRow(list.lastElementChild);
     };
-    (normalized.rules || []).forEach(appendRule);
+    const appendRef = (name = "") => {
+      list.insertAdjacentHTML("beforeend", accessRefMarkup(name));
+      list.lastElementChild.querySelector(".js-remove-access-rule").addEventListener("click", (event) => event.currentTarget.closest(".access-rule").remove());
+    };
+    (normalized.rules || []).forEach((entry) => entry.object ? appendRef(entry.object) : appendRule(entry));
     const updateMode = () => {
       const restricted = mode.value === "custom";
       custom.hidden = !restricted;
       if (restricted && !list.children.length) appendRule();
       list.querySelectorAll("input, select").forEach((input) => { input.disabled = !restricted; });
-      if (restricted) list.querySelectorAll(".access-rule").forEach(updatePortField);
+      if (restricted) list.querySelectorAll(".access-rule").forEach((row) => { if (row.querySelector(".js-rule-protocol")) updatePortField(row); });
     };
     const serialize = () => {
       if (mode.value !== "custom") {
         hidden.value = "[]";
         return;
       }
-      const rules = [...list.querySelectorAll(".access-rule")].map((row) => ({
-        destination: row.querySelector(".js-rule-destination").value.trim(),
-        protocol: row.querySelector(".js-rule-protocol").value,
-        ports: row.querySelector(".js-rule-ports").disabled ? "" : row.querySelector(".js-rule-ports").value.trim(),
-      }));
+      const rules = [...list.querySelectorAll(".access-rule")].map((row) => {
+        if (row.classList.contains("access-ref")) {
+          return {object: row.querySelector(".js-ref-name").value};
+        }
+        return {
+          destination: row.querySelector(".js-rule-destination").value.trim(),
+          protocol: row.querySelector(".js-rule-protocol").value,
+          ports: row.querySelector(".js-rule-ports").disabled ? "" : row.querySelector(".js-rule-ports").value.trim(),
+        };
+      });
       hidden.value = JSON.stringify(rules);
     };
     mode.addEventListener("change", updateMode);
     add.addEventListener("click", () => appendRule());
+    if (addRef) {
+      addRef.hidden = availableAccessObjects.length === 0;
+      addRef.addEventListener("click", () => appendRef());
+    }
     editor.closest("form")?.addEventListener("submit", serialize);
     updateMode();
   };
@@ -338,6 +360,86 @@
       });
     });
   }
+
+  const objectModal = document.getElementById("object-modal");
+  if (objectModal) {
+    const objectForm = objectModal.querySelector("form");
+    const objectName = document.getElementById("object-name");
+    const objectDescription = document.getElementById("object-description");
+    const objectTitle = document.getElementById("object-title");
+    const entryList = objectModal.querySelector(".js-object-entry-list");
+    const objectRules = objectModal.querySelector(".js-object-rules");
+    const addObjectRule = objectModal.querySelector(".js-object-add-rule");
+    const addObjectRef = objectModal.querySelector(".js-object-add-ref");
+    const bindObjectRow = (row) => {
+      row.querySelector(".js-remove-access-rule").addEventListener("click", () => row.remove());
+      const protocol = row.querySelector(".js-rule-protocol");
+      if (!protocol) return;
+      const updatePorts = () => {
+        const ports = row.querySelector(".js-rule-ports");
+        const supportsPorts = protocol.value === "tcp" || protocol.value === "udp";
+        ports.disabled = !supportsPorts;
+        ports.required = supportsPorts;
+        if (!supportsPorts) ports.value = "";
+      };
+      protocol.addEventListener("change", updatePorts);
+      updatePorts();
+    };
+    const appendObjectRule = (rule = {}) => {
+      entryList.insertAdjacentHTML("beforeend", accessRuleMarkup(rule));
+      bindObjectRow(entryList.lastElementChild);
+    };
+    const appendObjectRef = (name = "") => {
+      entryList.insertAdjacentHTML("beforeend", accessRefMarkup(name, objectName.value));
+      bindObjectRow(entryList.lastElementChild);
+    };
+    const openObjectEditor = (name, description, rules) => {
+      objectName.value = name;
+      objectName.readOnly = Boolean(name);
+      objectDescription.value = description;
+      entryList.innerHTML = "";
+      rules.forEach((entry) => entry.object ? appendObjectRef(entry.object) : appendObjectRule(entry));
+      if (!entryList.children.length) appendObjectRule();
+      objectTitle.textContent = name ? `Edit access object ${name}` : "New access object";
+      addObjectRef.hidden = availableAccessObjects.filter((item) => item !== name).length === 0;
+      objectModal.showModal();
+      requestAnimationFrame(() => (name ? objectDescription : objectName).focus());
+    };
+    document.getElementById("add-access-object")?.addEventListener("click", () => openObjectEditor("", "", []));
+    document.querySelectorAll(".js-object-edit").forEach((button) => {
+      button.addEventListener("click", () => {
+        let rules = [];
+        try { rules = JSON.parse(button.dataset.rules || "[]"); } catch (_error) { /* server validation remains authoritative */ }
+        openObjectEditor(button.dataset.name, button.dataset.description || "", rules);
+      });
+    });
+    addObjectRule.addEventListener("click", () => appendObjectRule());
+    addObjectRef.addEventListener("click", () => appendObjectRef());
+    objectForm.addEventListener("submit", () => {
+      const entries = [...entryList.querySelectorAll(".access-rule")].map((row) => {
+        if (row.classList.contains("access-ref")) {
+          return {object: row.querySelector(".js-ref-name").value};
+        }
+        return {
+          destination: row.querySelector(".js-rule-destination").value.trim(),
+          protocol: row.querySelector(".js-rule-protocol").value,
+          ports: row.querySelector(".js-rule-ports").disabled ? "" : row.querySelector(".js-rule-ports").value.trim(),
+        };
+      });
+      objectRules.value = JSON.stringify(entries);
+    });
+  }
+
+  const objectDeleteModal = document.getElementById("object-delete-modal");
+  const objectDeleteForm = document.getElementById("object-delete-form");
+  const objectDeleteName = document.getElementById("object-delete-name");
+  document.querySelectorAll(".js-object-delete").forEach((button) => {
+    button.addEventListener("click", () => {
+      objectDeleteForm.action = `/access-objects/${encode(button.dataset.name)}/delete`;
+      objectDeleteName.textContent = button.dataset.name;
+      objectDeleteModal.showModal();
+    });
+  });
 
   const restoreModal = document.getElementById("restore-modal");
   const restoreForm = document.getElementById("restore-form");

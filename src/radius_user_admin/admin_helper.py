@@ -32,8 +32,11 @@ from radius_user_admin.access_policy import (
     access_summary,
     allowed_destinations,
     cisco_avpairs,
+    clean_access_objects,
     clean_access_policy,
+    clean_object_name,
     full_access_policy,
+    resolved_policy,
 )
 
 USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
@@ -57,6 +60,8 @@ OPERATIONS = {
     "set-duo",
     "set-access-policy",
     "set-expiry",
+    "object-set",
+    "object-delete",
     "delete",
     "sync",
     "reconcile",
@@ -420,6 +425,14 @@ class Store:
         if data.get("version") not in {1, 2, 3} or not isinstance(data.get("users"), list):
             raise AdminError("User state has an unsupported format.")
         legacy = data["version"] in {1, 2}
+        try:
+            objects = clean_access_objects(
+                data.setdefault("access_objects", []),
+                destination_allowlist=self.policy_destinations,
+            )
+        except AccessPolicyError as exc:
+            raise AdminError(str(exc)) from exc
+        data["access_objects"] = list(objects.values())
         for user in data["users"]:
             has_clear = "password" in user
             has_hash = "nt_password" in user
@@ -452,6 +465,7 @@ class Store:
                 user["access_policy"] = clean_access_policy(
                     user["access_policy"],
                     destination_allowlist=self.policy_destinations,
+                    objects=objects,
                 )
             except AccessPolicyError as exc:
                 raise AdminError(str(exc)) from exc
@@ -459,6 +473,7 @@ class Store:
                 cisco_avpairs(
                     user["access_policy"],
                     destination_allowlist=self.policy_destinations,
+                    objects=objects,
                 )
             except AccessPolicyError as exc:
                 raise AdminError(str(exc)) from exc
@@ -467,8 +482,17 @@ class Store:
             )
         return data
 
+    @staticmethod
+    def _objects_map(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        return {item["name"]: item for item in data.get("access_objects", [])}
+
+    @staticmethod
+    def _referenced_objects(policy_rules: list[dict[str, Any]]) -> set[str]:
+        return {entry["object"] for entry in policy_rules if "object" in entry}
+
     def public_list(self) -> dict[str, Any]:
         data = self.load()
+        objects = self._objects_map(data)
         auth = self.last_authentication()
         panel_admins = self.panel_admin_usernames()
         current_timestamp = int(datetime.now(UTC).timestamp())
@@ -504,21 +528,49 @@ class Store:
             public["access_summary"] = access_summary(
                 item["access_policy"],
                 destination_allowlist=self.policy_destinations,
+                objects=objects,
             )
             public["access_avpairs"] = cisco_avpairs(
                 item["access_policy"],
                 destination_allowlist=self.policy_destinations,
+                objects=objects,
             )
             public["custom_access_eligible"] = (
                 item["username"] not in self.local_fallback_users
             )
             users.append(public)
+        used_by: dict[str, int] = {name: 0 for name in objects}
+        for item in data["users"]:
+            for name in self._referenced_objects(item["access_policy"]["rules"]):
+                used_by[name] += 1
+        for definition in objects.values():
+            for name in self._referenced_objects(definition["rules"]):
+                used_by[name] += 1
+        for invitation in self._load_invitations(objects=objects)["invitations"]:
+            if invitation.get("used_at"):
+                continue
+            for name in self._referenced_objects(invitation["access_policy"]["rules"]):
+                used_by[name] += 1
         return {
             "users": users,
             "health": self.health(),
             "access_policy": {
                 "custom_enabled": self._custom_dacl_ready(),
                 "allowed_destinations": [item.with_prefixlen for item in self.policy_destinations],
+                "objects": [
+                    {
+                        "name": definition["name"],
+                        "description": definition["description"],
+                        "rules": definition["rules"],
+                        "summary": access_summary(
+                            {"mode": "custom", "rules": definition["rules"]},
+                            destination_allowlist=self.policy_destinations,
+                            objects=objects,
+                        ),
+                        "used_by": used_by[definition["name"]],
+                    }
+                    for definition in objects.values()
+                ],
             },
         }
 
@@ -628,7 +680,9 @@ class Store:
                 raise AdminError("That VPN account already exists.")
             stamp = now()
             access_policy = self._clean_policy_for_assignment(
-                invitation.get("access_policy"), username=username
+                invitation.get("access_policy"),
+                username=username,
+                objects=self._objects_map(data),
             )
             data["users"].append(
                 {
@@ -683,9 +737,13 @@ class Store:
                 raise AdminError("No pending invitation was found for that user.")
             self._write_invitations(data)
 
-    def _load_invitations(self) -> dict[str, Any]:
+    def _load_invitations(
+        self, objects: dict[str, dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         if not self.invitation_path.exists():
             return {"version": 2, "invitations": []}
+        if objects is None:
+            objects = self._objects_map(self.load())
         try:
             data = json.loads(self.invitation_path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
@@ -702,17 +760,25 @@ class Store:
                 raise AdminError(
                     "Version 2 invitation state is missing its access policy."
                 )
+            if invitation.get("used_at"):
+                # Historical record only; it can never be accepted again, so a
+                # policy that no longer validates must not poison the store.
+                continue
             try:
                 invitation["access_policy"] = clean_access_policy(
                     invitation["access_policy"],
                     destination_allowlist=self.policy_destinations,
+                    objects=objects,
                 )
                 cisco_avpairs(
                     invitation["access_policy"],
                     destination_allowlist=self.policy_destinations,
+                    objects=objects,
                 )
             except AccessPolicyError as exc:
-                raise AdminError(str(exc)) from exc
+                raise AdminError(
+                    f"Invitation for '{invitation.get('username')}': {exc}"
+                ) from exc
             self._reject_local_fallback_policy(
                 invitation["username"], invitation["access_policy"]
             )
@@ -855,7 +921,9 @@ class Store:
                 reason = clean_reason(payload.get("duo_bypass_reason"))
                 expires_at = clean_optional_time(payload.get("expires_at"), "account expiry")
                 access_policy = self._clean_policy_for_assignment(
-                    payload.get("access_policy"), username=username
+                    payload.get("access_policy"),
+                    username=username,
+                    objects=self._objects_map(data),
                 )
                 if not duo_required and not reason:
                     raise AdminError("A reason is required for password-only access.")
@@ -946,7 +1014,9 @@ class Store:
                     user["updated_at"] = now()
                 elif operation == "set-access-policy":
                     user["access_policy"] = self._clean_policy_for_assignment(
-                        payload.get("access_policy"), username=username
+                        payload.get("access_policy"),
+                        username=username,
+                        objects=self._objects_map(data),
                     )
                     user["updated_at"] = now()
                 elif operation == "delete":
@@ -962,6 +1032,87 @@ class Store:
 
             data["version"] = 3
             self._commit(data, admin_data=admin_data)
+
+    def mutate_objects(self, operation: str, payload: dict[str, Any]) -> None:
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = self.load()
+            try:
+                name = clean_object_name(payload.get("name"))
+            except AccessPolicyError as exc:
+                raise AdminError(str(exc)) from exc
+            remaining = [
+                item for item in data.get("access_objects", []) if item["name"] != name
+            ]
+            if operation == "object-set":
+                candidate = remaining + [
+                    {
+                        "name": name,
+                        "description": payload.get("description"),
+                        "rules": payload.get("rules"),
+                    }
+                ]
+                try:
+                    objects = clean_access_objects(
+                        candidate, destination_allowlist=self.policy_destinations
+                    )
+                except AccessPolicyError as exc:
+                    raise AdminError(str(exc)) from exc
+                data["access_objects"] = list(objects.values())
+                for user in data["users"]:
+                    try:
+                        user["access_policy"] = clean_access_policy(
+                            user["access_policy"],
+                            destination_allowlist=self.policy_destinations,
+                            objects=objects,
+                        )
+                        cisco_avpairs(
+                            user["access_policy"],
+                            destination_allowlist=self.policy_destinations,
+                            objects=objects,
+                        )
+                    except AccessPolicyError as exc:
+                        raise AdminError(
+                            f"The change breaks the policy of '{user['username']}': {exc}"
+                        ) from exc
+                self._load_invitations(objects=objects)
+            elif operation == "object-delete":
+                if len(remaining) == len(data.get("access_objects", [])):
+                    raise AdminError("Access object not found.")
+                held_by = sorted(
+                    {
+                        user["username"]
+                        for user in data["users"]
+                        if name
+                        in self._referenced_objects(user["access_policy"]["rules"])
+                    }
+                    | {
+                        item["name"]
+                        for item in remaining
+                        if name in self._referenced_objects(item["rules"])
+                    }
+                    | {
+                        invitation["username"]
+                        for invitation in self._load_invitations(
+                            objects=self._objects_map(data)
+                        )["invitations"]
+                        if not invitation.get("used_at")
+                        and name
+                        in self._referenced_objects(
+                            invitation["access_policy"]["rules"]
+                        )
+                    }
+                )
+                if held_by:
+                    raise AdminError(
+                        "The access object is still in use by: " + ", ".join(held_by)
+                    )
+                data["access_objects"] = remaining
+            else:
+                raise AdminError("Unsupported operation.")
+            data["version"] = 3
+            self._commit(data)
 
     def migrate_passwords(self, username: object = None) -> list[str]:
         """Replace legacy clear-text VPN credentials with MS-CHAPv2 NT hashes."""
@@ -1084,6 +1235,7 @@ class Store:
         return bool(user["duo_required"]) or is_past(user.get("duo_bypass_until"))
 
     def _render(self, data: dict[str, Any]) -> str:
+        objects = self._objects_map(data)
         lines = ["# Generated by radius-user-admin. Do not edit by hand."]
         for user in sorted(data["users"], key=lambda item: item["username"]):
             if self._effective_enabled(user):
@@ -1091,6 +1243,7 @@ class Store:
                     policy = clean_access_policy(
                         user.get("access_policy"),
                         destination_allowlist=self.policy_destinations,
+                        objects=objects,
                     )
                 except AccessPolicyError as exc:
                     raise AdminError(str(exc)) from exc
@@ -1098,7 +1251,12 @@ class Store:
                 # restricted account from RADIUS until reconciliation is healthy.
                 if policy["mode"] == "custom" and not self._custom_dacl_ready():
                     continue
-                lines.append(f"# Access-Policy: {encode_access_policy(policy)}")
+                # The comment stores the resolved rules so bootstrap recovery
+                # never depends on the saved-object store being present.
+                lines.append(
+                    "# Access-Policy: "
+                    f"{encode_access_policy(resolved_policy(policy, objects=objects))}"
+                )
                 if "nt_password" in user:
                     password_hash = clean_nt_password(user["nt_password"])
                     lines.append(f'{user["username"]} NT-Password := 0x{password_hash}')
@@ -1110,6 +1268,7 @@ class Store:
                 attributes = cisco_avpairs(
                     policy,
                     destination_allowlist=self.policy_destinations,
+                    objects=objects,
                 )
                 for index, attribute in enumerate(attributes):
                     suffix = "," if index < len(attributes) - 1 else ""
@@ -1191,12 +1350,19 @@ class Store:
             )
 
     def _clean_policy_for_assignment(
-        self, value: object, *, username: str | None = None
+        self,
+        value: object,
+        *,
+        username: str | None = None,
+        objects: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        if objects is None:
+            objects = self._objects_map(self.load())
         try:
             policy = clean_access_policy(
                 value,
                 destination_allowlist=self.policy_destinations,
+                objects=objects,
             )
         except AccessPolicyError as exc:
             raise AdminError(str(exc)) from exc
@@ -1204,6 +1370,7 @@ class Store:
             cisco_avpairs(
                 policy,
                 destination_allowlist=self.policy_destinations,
+                objects=objects,
             )
         except AccessPolicyError as exc:
             raise AdminError(str(exc)) from exc
@@ -1469,6 +1636,14 @@ class Store:
         if data.get("version") not in {1, 2, 3} or not isinstance(data.get("users"), list):
             raise AdminError("The backup contains unsupported user data.")
         legacy = data["version"] in {1, 2}
+        try:
+            backup_objects = clean_access_objects(
+                data.setdefault("access_objects", []),
+                destination_allowlist=self.policy_destinations,
+            )
+        except AccessPolicyError as exc:
+            raise AdminError(str(exc)) from exc
+        data["access_objects"] = list(backup_objects.values())
         for user in data["users"]:
             clean_username(user.get("username"))
             has_clear = "password" in user
@@ -1499,7 +1674,9 @@ class Store:
             if not isinstance(user["access_policy"], dict):
                 raise AdminError("The backup contains a corrupt access policy.")
             user["access_policy"] = self._clean_policy_for_assignment(
-                user["access_policy"], username=user["username"]
+                user["access_policy"],
+                username=user["username"],
+                objects=backup_objects,
             )
         if not any(self._effective_enabled(user) for user in data["users"]):
             raise AdminError("The backup contains no enabled, unexpired users.")
@@ -1815,7 +1992,9 @@ def main() -> int:
         store = Store()
         actor = str(payload.get("_actor") or "system")
         source_ip = str(payload.get("_source_ip") or "local")
-        target = str(payload.get("username") or payload.get("backup") or "")
+        target = str(
+            payload.get("username") or payload.get("backup") or payload.get("name") or ""
+        )
         if args.operation == "bootstrap":
             store.bootstrap()
             result: dict[str, Any] = {}
@@ -1897,6 +2076,9 @@ def main() -> int:
         elif args.operation == "reconcile":
             changes = store.reconcile()
             result = {"changes": changes}
+        elif args.operation in {"object-set", "object-delete"}:
+            store.mutate_objects(args.operation, payload)
+            result = {}
         else:
             store.mutate(args.operation, payload)
             result = {}
@@ -1908,6 +2090,8 @@ def main() -> int:
             "set-duo",
             "set-access-policy",
             "set-expiry",
+            "object-set",
+            "object-delete",
             "delete",
             "restore",
             "set-admin-password",

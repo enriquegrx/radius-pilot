@@ -58,6 +58,7 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .access-rule { align-items: end; display: grid; gap: .65rem; grid-template-columns: minmax(180px,1.4fr) minmax(110px,.65fr) minmax(170px,1fr) auto; margin-bottom: .8rem; }
 .access-rule .form-label { font-size: .75rem; margin-bottom: .3rem; }
 .access-rule .js-remove-access-rule { margin-bottom: .1rem; }
+.access-rule.access-ref { grid-template-columns: minmax(180px,1fr) auto; }
 .section-nav a.active,.section-nav a.active:hover,.section-nav a.active:focus-visible { background: var(--brand-blue); color: #fff; }
 [data-user-row] { cursor: pointer; }
 .row-caret { border-bottom: 2px solid #94a3b8; border-right: 2px solid #94a3b8; display: inline-block; flex: 0 0 auto; height: .45rem; transform: rotate(-45deg); transition: transform .15s ease; width: .45rem; }

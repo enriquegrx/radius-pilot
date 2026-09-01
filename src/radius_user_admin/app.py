@@ -360,6 +360,7 @@ def index(request: Request):
             "expiring_count": sum(user["expires_soon"] for user in users),
             "custom_access_enabled": bool(access_policy.get("custom_enabled")),
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
+            "access_objects": access_policy.get("objects", []),
         },
     )
 
@@ -726,6 +727,35 @@ def set_access_policy(
         "set-access-policy",
         {"username": username, "access_policy": policy},
     )
+
+
+@app.post("/access-objects")
+def save_access_object(
+    request: Request,
+    csrf: str = Form(),
+    name: str = Form(),
+    description: str = Form(default=""),
+    object_rules: str = Form(default="[]"),
+):
+    if len(object_rules) > 12000:
+        return redirect(request, "The object rules are too large.", "danger", "users")
+    try:
+        rules = json.loads(object_rules)
+    except json.JSONDecodeError:
+        return redirect(request, "The object rules are invalid.", "danger", "users")
+    if not isinstance(rules, list):
+        return redirect(request, "The object rules are invalid.", "danger", "users")
+    return mutate(
+        request,
+        csrf,
+        "object-set",
+        {"name": name, "description": description, "rules": rules},
+    )
+
+
+@app.post("/access-objects/{name}/delete")
+def delete_access_object(name: str, request: Request, csrf: str = Form()):
+    return mutate(request, csrf, "object-delete", {"name": name})
 
 
 @app.post("/users/{username}/duo-check")
