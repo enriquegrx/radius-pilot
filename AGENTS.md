@@ -4,7 +4,8 @@
 
 This repository contains the small, local-only administration console for the
 Example Organization FreeRADIUS user file. Keep its scope narrow: list users, create users,
-rename users, reset passwords, block/unblock users, and delete users.
+choose per-user Duo enforcement, rename users, reset passwords, block/unblock
+users, and delete users.
 
 ## Security boundaries
 
@@ -17,15 +18,19 @@ rename users, reset passwords, block/unblock users, and delete users.
 - Never add WAN NAT, a public reverse proxy, or a Cloudflare Tunnel for this app.
 - Keep the state file root-only and the generated FreeRADIUS file `root:freerad`
   mode `0640`.
-- Every mutation must validate the complete FreeRADIUS configuration and roll
-  back both files if validation or restart fails.
-- Do not change the Cisco router or the Duo integration from this repository.
+- Every mutation must validate FreeRADIUS and any changed Duo Authentication
+  Proxy configuration, then roll back all managed files if validation or restart
+  fails.
+- Manage Duo exceptions only inside the marked `radius_server_auto` block. Never
+  change keys, secrets, hosts, ports, or Cisco router configuration here.
 
 ## Product rules
 
 - Common tasks must take no more than three clicks from the user list.
 - Never display an existing password. Password reset accepts a new value only.
 - The FreeRADIUS username must exactly match the corresponding Duo username.
+- Existing and newly created users default to requiring Duo. Password-only mode
+  is an explicit per-user choice and must remain scoped to this VPN integration.
 - Prevent blocking or deleting the final enabled user.
 - Keep static assets local. Production must not depend on a CDN.
 

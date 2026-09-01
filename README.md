@@ -2,8 +2,8 @@
 
 🛡️ A deliberately small web console for managing the VPN users authenticated by
 FreeRADIUS at Example Organization. It is built for the handful of jobs that matter day to day:
-see who has access, add an account, rename it, reset its password, block it, or
-remove it.
+see who has access, add an account, choose whether it requires Duo Push, rename
+it, reset its password, block it, or remove it.
 
 The application runs on `radius01` behind Nginx. FastAPI listens only on
 loopback; Nginx publishes HTTPS to the approved internal and VPN networks. There
@@ -13,13 +13,18 @@ is no WAN NAT, Cloudflare Tunnel, or public admin path.
 
 - Lists enabled and blocked users without exposing passwords.
 - Creates, renames, blocks, unblocks, and deletes accounts.
+- Switches each enabled account between password plus Duo Push and password only.
 - Resets a password without ever showing the previous one.
 - Refuses to block or delete the final enabled account.
 - Validates the full FreeRADIUS configuration before restarting the service.
-- Restores the previous files automatically if validation or restart fails.
+- Validates both FreeRADIUS and Duo Authentication Proxy before restarting them.
+- Restores all previous files automatically if validation or restart fails.
 - Keeps a root-owned state file and generates the existing `authorize` file.
 
-The username entered here must match the username enrolled in Duo. Blocking a
+The username entered here must match the username enrolled in Duo when Duo Push
+is required. Password-only mode uses Duo Authentication Proxy's
+`exempt_username_N` setting for this VPN integration; FreeRADIUS still checks the
+primary password. It does not place the user in global Duo bypass. Blocking a
 user removes it from the generated FreeRADIUS file, so neither the primary
 password nor Duo Push is reached.
 
@@ -41,6 +46,8 @@ The helper maintains:
 - `/var/lib/radius-user-admin/users.json` — root-only source of truth.
 - `/etc/freeradius/3.0/mods-config/files/vpn-users/authorize` — generated
   active users consumed by FreeRADIUS.
+- `/opt/duoauthproxy/conf/authproxy.cfg` — retains its hand-written settings and
+  receives only a marked, generated username-exemption block.
 - `/var/backups/radius-user-admin/` — dated snapshots before every mutation.
 
 The interface uses the open-source [Tabler](https://tabler.io/) design system,

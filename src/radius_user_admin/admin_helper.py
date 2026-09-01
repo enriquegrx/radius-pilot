@@ -22,7 +22,20 @@ USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 AUTHORIZE_LINE = re.compile(
     r'^([a-z0-9][a-z0-9._-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
 )
-OPERATIONS = {"bootstrap", "list", "create", "rename", "reset-password", "set-enabled", "delete"}
+OPERATIONS = {
+    "bootstrap",
+    "list",
+    "create",
+    "rename",
+    "reset-password",
+    "set-enabled",
+    "set-duo",
+    "delete",
+    "sync",
+}
+DUO_BEGIN = "# BEGIN RADIUS USER ADMIN EXEMPTIONS"
+DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
+DUO_SECTION = "radius_server_auto"
 
 
 class AdminError(RuntimeError):
@@ -66,16 +79,23 @@ class Store:
         ),
         backup_dir: Path = Path("/var/backups/radius-user-admin"),
         lock_path: Path = Path("/run/lock/radius-user-admin.lock"),
+        duo_config_path: Path = Path("/opt/duoauthproxy/conf/authproxy.cfg"),
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
         self.state_path = state_path
         self.authorize_path = authorize_path
         self.backup_dir = backup_dir
         self.lock_path = lock_path
+        self.duo_config_path = duo_config_path
         self.runner = runner
 
     def bootstrap(self) -> None:
         if self.state_path.exists():
+            raw = json.loads(self.state_path.read_text())
+            missing_duo_mode = any("duo_required" not in user for user in raw.get("users", []))
+            data = self.load()
+            if missing_duo_mode:
+                self._atomic_json(data)
             return
         users = []
         for line in self.authorize_path.read_text().splitlines():
@@ -91,6 +111,7 @@ class Store:
                     "username": match.group(1),
                     "password": decode_radius(match.group(2)),
                     "enabled": True,
+                    "duo_required": True,
                     "created_at": stamp,
                     "updated_at": stamp,
                 }
@@ -106,12 +127,23 @@ class Store:
         data = json.loads(self.state_path.read_text())
         if data.get("version") != 1 or not isinstance(data.get("users"), list):
             raise AdminError("User state has an unsupported format.")
+        for user in data["users"]:
+            user.setdefault("duo_required", True)
         return data
 
     def public_list(self) -> dict[str, Any]:
         data = self.load()
         users = [
-            {key: item[key] for key in ("username", "enabled", "created_at", "updated_at")}
+            {
+                key: item[key]
+                for key in (
+                    "username",
+                    "enabled",
+                    "duo_required",
+                    "created_at",
+                    "updated_at",
+                )
+            }
             for item in sorted(data["users"], key=lambda user: user["username"])
         ]
         return {"users": users, "health": self.health()}
@@ -135,7 +167,16 @@ class Store:
             ).returncode
             == 0
         )
-        return {"active": active, "config_valid": valid}
+        duo_active = (
+            self.runner(
+                ["/usr/bin/systemctl", "is-active", "--quiet", "duoauthproxy"],
+                check=False,
+                capture_output=True,
+                text=True,
+            ).returncode
+            == 0
+        )
+        return {"active": active, "config_valid": valid, "duo_active": duo_active}
 
     def mutate(self, operation: str, payload: dict[str, Any]) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +196,9 @@ class Store:
                         "username": username,
                         "password": clean_password(payload.get("password")),
                         "enabled": True,
+                        "duo_required": self._clean_bool(
+                            payload.get("duo_required"), "authentication mode"
+                        ),
                         "created_at": stamp,
                         "updated_at": stamp,
                     }
@@ -173,14 +217,17 @@ class Store:
                     user["password"] = clean_password(payload.get("password"))
                     user["updated_at"] = now()
                 elif operation == "set-enabled":
-                    enabled = payload.get("enabled")
-                    if not isinstance(enabled, bool):
-                        raise AdminError("Invalid account status.")
+                    enabled = self._clean_bool(payload.get("enabled"), "account status")
                     if not enabled and user["enabled"] and self._enabled_count(users) == 1:
                         raise AdminError(
                             "Add another enabled user before blocking the final account."
                         )
                     user["enabled"] = enabled
+                    user["updated_at"] = now()
+                elif operation == "set-duo":
+                    user["duo_required"] = self._clean_bool(
+                        payload.get("duo_required"), "authentication mode"
+                    )
                     user["updated_at"] = now()
                 elif operation == "delete":
                     if user["enabled"] and self._enabled_count(users) == 1:
@@ -192,6 +239,16 @@ class Store:
                     raise AdminError("Unsupported operation.")
 
             self._commit(data)
+
+    def sync(self) -> None:
+        """Render managed files from the current state without changing a user."""
+        self._commit(self.load())
+
+    @staticmethod
+    def _clean_bool(value: object, field: str) -> bool:
+        if not isinstance(value, bool):
+            raise AdminError(f"Invalid {field}.")
+        return value
 
     @staticmethod
     def _enabled_count(users: list[dict[str, Any]]) -> int:
@@ -205,6 +262,53 @@ class Store:
                     f'{user["username"]} Cleartext-Password := "{encode_radius(user["password"])}"'
                 )
         return "\n".join(lines) + "\n"
+
+    def _render_duo(self, original: str, data: dict[str, Any]) -> str:
+        if original.count(DUO_BEGIN) != original.count(DUO_END):
+            raise AdminError("The managed Duo exemption block is incomplete.")
+        managed = re.compile(
+            rf"\n?{re.escape(DUO_BEGIN)}.*?{re.escape(DUO_END)}\n?",
+            re.DOTALL,
+        )
+        cleaned = managed.sub("\n", original).rstrip() + "\n"
+        lines = cleaned.splitlines()
+        section_start = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if line.strip().lower() == f"[{DUO_SECTION}]"
+            ),
+            None,
+        )
+        if section_start is None:
+            raise AdminError("The Duo RADIUS server section was not found.")
+        section_end = next(
+            (
+                index
+                for index in range(section_start + 1, len(lines))
+                if re.fullmatch(r"\s*\[[^]]+]\s*", lines[index])
+            ),
+            len(lines),
+        )
+        if any(
+            re.match(r"\s*exempt_username_\d+\s*=", line, re.IGNORECASE)
+            for line in lines[section_start + 1 : section_end]
+        ):
+            raise AdminError("Unmanaged Duo username exemptions require manual review.")
+        exemptions = sorted(
+            user["username"]
+            for user in data["users"]
+            if user["enabled"] and not user["duo_required"]
+        )
+        block = [DUO_BEGIN]
+        block.extend(
+            f"exempt_username_{index}={username}"
+            for index, username in enumerate(exemptions, start=1)
+        )
+        block.append(DUO_END)
+        insertion = [""] + block
+        lines[section_end:section_end] = insertion
+        return "\n".join(lines).rstrip() + "\n"
 
     def _atomic_json(self, data: dict[str, Any]) -> None:
         self._atomic_write(self.state_path, json.dumps(data, indent=2) + "\n", 0o600)
@@ -230,12 +334,36 @@ class Store:
         destination.mkdir(parents=True, exist_ok=False)
         old_state = self.state_path.read_bytes()
         old_authorize = self.authorize_path.read_bytes()
+        old_duo = self.duo_config_path.read_bytes()
         shutil.copy2(self.state_path, destination / "users.json")
         shutil.copy2(self.authorize_path, destination / "authorize")
+        shutil.copy2(self.duo_config_path, destination / "authproxy.cfg")
+        new_duo = self._render_duo(old_duo.decode(), data)
+        duo_changed = new_duo.encode() != old_duo
         self._atomic_json(data)
         self._atomic_write(self.authorize_path, self._render(data), 0o640)
+        candidate: Path | None = None
         try:
             os.chown(self.authorize_path, 0, grp.getgrnam("freerad").gr_gid)
+            if duo_changed:
+                candidate = self.duo_config_path.parent / ".authproxy.cfg.candidate"
+                self._atomic_write(candidate, new_duo, 0o600)
+                os.chown(candidate, pwd.getpwnam("duo_authproxy_svc").pw_uid, 0)
+                self._check(
+                    [
+                        "/opt/duoauthproxy/bin/authproxy_connectivity_tool",
+                        "--no-explicit-connectivity-check",
+                        "--config",
+                        str(candidate),
+                    ],
+                    "Duo Authentication Proxy rejected the new configuration.",
+                )
+                self._atomic_write(self.duo_config_path, new_duo, 0o600)
+                os.chown(
+                    self.duo_config_path,
+                    pwd.getpwnam("duo_authproxy_svc").pw_uid,
+                    0,
+                )
             self._check(
                 ["/usr/sbin/freeradius", "-C", "-l", "stdout"],
                 "FreeRADIUS rejected the new configuration.",
@@ -247,12 +375,32 @@ class Store:
                 ["/usr/bin/systemctl", "is-active", "--quiet", "freeradius"],
                 "FreeRADIUS is not active.",
             )
+            if duo_changed:
+                self._check(
+                    ["/usr/bin/systemctl", "restart", "duoauthproxy"],
+                    "Duo Authentication Proxy could not restart.",
+                )
+                self._check(
+                    ["/usr/bin/systemctl", "is-active", "--quiet", "duoauthproxy"],
+                    "Duo Authentication Proxy is not active.",
+                )
         except Exception:
             self._atomic_write(self.state_path, old_state.decode(), 0o600)
             self._atomic_write(self.authorize_path, old_authorize.decode(), 0o640)
+            self._atomic_write(self.duo_config_path, old_duo.decode(), 0o600)
             os.chown(self.authorize_path, 0, grp.getgrnam("freerad").gr_gid)
+            os.chown(
+                self.duo_config_path,
+                pwd.getpwnam("duo_authproxy_svc").pw_uid,
+                0,
+            )
             self.runner(["/usr/bin/systemctl", "restart", "freeradius"], check=False)
+            if duo_changed:
+                self.runner(["/usr/bin/systemctl", "restart", "duoauthproxy"], check=False)
             raise
+        finally:
+            if candidate is not None:
+                candidate.unlink(missing_ok=True)
 
     def _check(self, command: list[str], message: str) -> None:
         result = self.runner(command, check=False, capture_output=True, text=True)
@@ -283,6 +431,9 @@ def main() -> int:
             result: dict[str, Any] = {}
         elif args.operation == "list":
             result = store.public_list()
+        elif args.operation == "sync":
+            store.sync()
+            result = {}
         else:
             store.mutate(args.operation, payload)
             result = {}

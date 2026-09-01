@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex,nofollow">
     <title>Radius User Admin</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-2">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-2">
   </head>
   <body>
     <div class="page">
@@ -20,8 +20,8 @@
             </div>
           </div>
           <div class="d-flex align-items-center gap-2">
-            {% if health.active and health.config_valid %}
-              <span class="status status-green"><span class="status-dot status-dot-animated"></span>FreeRADIUS healthy</span>
+            {% if health.active and health.config_valid and health.duo_active %}
+              <span class="status status-green"><span class="status-dot status-dot-animated"></span>Authentication healthy</span>
             {% else %}
               <span class="status status-red"><span class="status-dot"></span>Service needs attention</span>
             {% endif %}
@@ -38,7 +38,7 @@
 
             <div class="row row-cards mb-4">
               <div class="col-sm-6 col-lg-4">
-                <div class="card metric-card"><div class="card-body"><div class="subheader">Enabled users</div><div class="h1 mb-0">{{ enabled_count }}</div><div class="text-secondary mt-1">Can reach primary auth and Duo</div></div></div>
+                <div class="card metric-card"><div class="card-body"><div class="subheader">Enabled users</div><div class="h1 mb-0">{{ enabled_count }}</div><div class="text-secondary mt-1">Allowed to authenticate</div></div></div>
               </div>
               <div class="col-sm-6 col-lg-4">
                 <div class="card metric-card"><div class="card-body"><div class="subheader">Blocked users</div><div class="h1 mb-0">{{ blocked_count }}</div><div class="text-secondary mt-1">Retained, but denied before Duo</div></div></div>
@@ -57,19 +57,20 @@
               </div>
               <div class="table-responsive">
                 <table class="table table-vcenter card-table">
-                  <thead><tr><th>User</th><th>Status</th><th>Last changed</th><th class="w-1"><span class="visually-hidden">Actions</span></th></tr></thead>
+                  <thead><tr><th>User</th><th>Status</th><th>Authentication</th><th>Last changed</th><th class="w-1"><span class="visually-hidden">Actions</span></th></tr></thead>
                   <tbody>
                     {% for user in users %}
                     <tr>
-                      <td><div class="d-flex align-items-center gap-3"><span class="avatar avatar-sm user-avatar">{{ user.username[:2] | upper }}</span><div><div class="fw-semibold">{{ user.username }}</div><div class="text-secondary small">FreeRADIUS + Duo</div></div></div></td>
+                      <td><div class="d-flex align-items-center gap-3"><span class="avatar avatar-sm user-avatar">{{ user.username[:2] | upper }}</span><div><div class="fw-semibold">{{ user.username }}</div><div class="text-secondary small">VPN account</div></div></div></td>
                       <td>{% if user.enabled %}<span class="badge bg-green-lt">Enabled</span>{% else %}<span class="badge bg-red-lt">Blocked</span>{% endif %}</td>
+                      <td>{% if user.duo_required %}<span class="badge bg-blue-lt">Duo Push</span>{% else %}<span class="badge bg-yellow-lt">Password only</span>{% endif %}</td>
                       <td class="text-secondary">{{ user.updated_at[:10] }} {{ user.updated_at[11:16] }} UTC</td>
                       <td>
-                        <button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}">Manage</button>
+                        <button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}">Manage</button>
                       </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="4"><div class="empty py-5"><p class="empty-title">No users available</p><p class="empty-subtitle text-secondary">Check the helper status or add the first account during bootstrap.</p></div></td></tr>
+                    <tr><td colspan="5"><div class="empty py-5"><p class="empty-title">No users available</p><p class="empty-subtitle text-secondary">Check the helper status or add the first account during bootstrap.</p></div></td></tr>
                     {% endfor %}
                   </tbody>
                 </table>
@@ -83,7 +84,7 @@
     <div class="modal modal-blur fade" id="create-modal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered"><form class="modal-content" method="post" action="/users">
         <div class="modal-header"><h2 class="modal-title">Add VPN user</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-        <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="mb-3"><label class="form-label" for="create-username">Username</label><input class="form-control" id="create-username" name="username" required minlength="1" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"><small class="form-hint">Use the exact Duo username.</small></div><div><label class="form-label" for="create-password">Initial password</label><input class="form-control" id="create-password" name="password" type="password" required minlength="14" maxlength="128" autocomplete="new-password"><small class="form-hint">14–128 characters. It will never be shown again.</small></div></div>
+        <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="mb-3"><label class="form-label" for="create-username">Username</label><input class="form-control" id="create-username" name="username" required minlength="1" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"><small class="form-hint">Use the exact Duo username when Duo Push is required.</small></div><div class="mb-3"><label class="form-label" for="create-password">Initial password</label><input class="form-control" id="create-password" name="password" type="password" required minlength="14" maxlength="128" autocomplete="new-password"><small class="form-hint">14–128 characters. It will never be shown again.</small></div><div><label class="form-label" for="create-duo">Authentication</label><select class="form-select" id="create-duo" name="duo_required"><option value="true" selected>Password + Duo Push</option><option value="false">Password only</option></select><small class="form-hint">Password only bypasses Duo for this VPN integration.</small></div></div>
         <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create user</button></div>
       </form></div>
     </div>
@@ -96,7 +97,7 @@
       </form></div>
     </div>
 
-    <script src="{{ url_for('static', path='vendor/tabler/tabler.min.js') }}"></script>
-    <script src="{{ url_for('static', path='app.js') }}"></script>
+    <script src="{{ url_for('static', path='vendor/tabler/tabler.min.js') }}?v=20260901-2"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260901-2"></script>
   </body>
 </html>

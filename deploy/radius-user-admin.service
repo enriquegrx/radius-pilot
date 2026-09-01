@@ -24,7 +24,7 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/etc/freeradius/3.0/mods-config/files/vpn-users /var/lib/radius-user-admin /var/backups/radius-user-admin /run/lock
+ReadWritePaths=/etc/freeradius/3.0/mods-config/files/vpn-users /opt/duoauthproxy/conf /opt/duoauthproxy/log /var/lib/radius-user-admin /var/backups/radius-user-admin /run/lock
 
 [Install]
 WantedBy=multi-user.target

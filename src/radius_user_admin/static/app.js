@@ -13,7 +13,7 @@
     `<input class="form-control" id="action-input" name="${name}" type="${type}" value="${value}" required ` +
     `${type === "password" ? 'minlength="14" maxlength="128" autocomplete="new-password"' : 'maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"'}>`;
 
-  const configureAction = (action, user, enabled) => {
+  const configureAction = (action, user, enabled, duoRequired) => {
     const encoded = encodeURIComponent(user);
     submit.hidden = false;
     submit.className = "btn btn-primary";
@@ -39,6 +39,14 @@
       form.action = `/users/${encoded}/status`;
       submit.textContent = `${verb} user`;
       if (enabled !== "true") submit.className = "btn btn-warning";
+    } else if (action === "duo") {
+      const requireDuo = duoRequired !== "true";
+      title.textContent = `${requireDuo ? "Require Duo Push" : "Use password only"} for ${user}?`;
+      description.textContent = requireDuo ? "The next VPN login will require approval in Duo." : "The password will still be checked, but this VPN will skip Duo Push.";
+      field.innerHTML = `<input type="hidden" name="duo_required" value="${requireDuo}">`;
+      form.action = `/users/${encoded}/duo`;
+      submit.textContent = requireDuo ? "Require Duo Push" : "Use password only";
+      if (!requireDuo) submit.className = "btn btn-warning";
     } else {
       title.textContent = `Delete ${user}?`;
       description.textContent = "This permanently removes the local VPN credential. The Duo account is not deleted.";
@@ -53,7 +61,9 @@
     button.addEventListener("click", () => {
       const user = button.dataset.user;
       const nextEnabled = button.dataset.enabled === "true" ? "false" : "true";
+      const duoRequired = button.dataset.duoRequired;
       const statusLabel = nextEnabled === "true" ? "Unblock user" : "Block user";
+      const duoLabel = duoRequired === "true" ? "Use password only" : "Require Duo Push";
       title.textContent = `Manage ${user}`;
       description.textContent = "Choose an account action.";
       submit.hidden = true;
@@ -63,11 +73,12 @@
         <div class="admin-action-grid">
           <button type="button" class="admin-action" data-modal-action="rename">Rename user<span>Keep Duo and RADIUS aligned</span></button>
           <button type="button" class="admin-action" data-modal-action="password">Reset password<span>Replace the current secret</span></button>
+          <button type="button" class="admin-action" data-modal-action="duo">${duoLabel}<span>${duoRequired === "true" ? "Skip Push for this VPN" : "Restore multi-factor authentication"}</span></button>
           <button type="button" class="admin-action" data-modal-action="status">${statusLabel}<span>${nextEnabled === "true" ? "Restore VPN access" : "Stop access before Duo"}</span></button>
           <button type="button" class="admin-action admin-action-danger" data-modal-action="delete">Delete user<span>Remove the local credential</span></button>
         </div>`;
       field.querySelectorAll("[data-modal-action]").forEach((actionButton) => {
-        actionButton.addEventListener("click", () => configureAction(actionButton.dataset.modalAction, user, nextEnabled));
+        actionButton.addEventListener("click", () => configureAction(actionButton.dataset.modalAction, user, nextEnabled, duoRequired));
       });
       modal.show();
     });

@@ -56,7 +56,11 @@ def index(request: Request, message: str = "", level: str = "success"):
         health = data["health"]
         error = ""
     except HelperError as exc:
-        users, health, error = [], {"active": False, "config_valid": False}, str(exc)
+        users, health, error = (
+            [],
+            {"active": False, "config_valid": False, "duo_active": False},
+            str(exc),
+        )
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -82,7 +86,7 @@ def mutate(request: Request, token: str, operation: str, payload: dict[str, obje
     try:
         check_csrf(request, token)
         call_helper(operation, payload)
-        return redirect("Change applied and FreeRADIUS validated.")
+        return redirect("Change applied and authentication services validated.")
     except HelperError as exc:
         return redirect(str(exc), "danger")
 
@@ -93,8 +97,18 @@ def create_user(
     csrf: str = Form(),
     username: str = Form(),
     password: str = Form(),
+    duo_required: bool = Form(),
 ):
-    return mutate(request, csrf, "create", {"username": username, "password": password})
+    return mutate(
+        request,
+        csrf,
+        "create",
+        {
+            "username": username,
+            "password": password,
+            "duo_required": duo_required,
+        },
+    )
 
 
 @app.post("/users/{username}/rename")
@@ -134,6 +148,21 @@ def set_status(
     if response.headers.get("location", "").startswith("/?message=Change"):
         return redirect(f"User {action}; FreeRADIUS validated.")
     return response
+
+
+@app.post("/users/{username}/duo")
+def set_duo(
+    username: str,
+    request: Request,
+    csrf: str = Form(),
+    duo_required: bool = Form(),
+):
+    return mutate(
+        request,
+        csrf,
+        "set-duo",
+        {"username": username, "duo_required": duo_required},
+    )
 
 
 @app.post("/users/{username}/delete")

@@ -18,11 +18,12 @@ def fake_helper(operation: str, _payload=None):
             {
                 "username": "vpn-test-user",
                 "enabled": True,
+                "duo_required": True,
                 "created_at": "2026-09-01T06:00:00+00:00",
                 "updated_at": "2026-09-01T06:00:00+00:00",
             }
         ],
-        "health": {"active": True, "config_valid": True},
+        "health": {"active": True, "config_valid": True, "duo_active": True},
     }
 
 
@@ -31,7 +32,8 @@ def test_dashboard_renders_user_without_password(monkeypatch) -> None:
     response = TestClient(app_module.app).get("/")
     assert response.status_code == 200
     assert "vpn-test-user" in response.text
-    assert "FreeRADIUS healthy" in response.text
+    assert "Authentication healthy" in response.text
+    assert "Duo Push" in response.text
     assert "long-enough-password" not in response.text
     assert "js-manage" in response.text
     assert "dropdown-menu" not in response.text
