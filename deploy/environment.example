@@ -1,0 +1,14 @@
+# Required: stable signing key for browser sessions.
+RADIUS_ADMIN_SESSION_SECRET=replace-with-at-least-32-random-bytes
+RADIUS_ADMIN_SECURE_COOKIE=1
+RADIUS_ADMIN_PUBLIC_URL=https://radius.your-domain.com
+RADIUS_ADMIN_ALLOWED_HOSTS=radius.your-domain.com,127.0.0.1,localhost
+
+# Optional SMTP delivery for one-time invitations. Without this block, the
+# panel displays each invitation once so an administrator can copy it.
+RADIUS_ADMIN_SMTP_HOST=smtp.your-domain.com
+RADIUS_ADMIN_SMTP_PORT=587
+RADIUS_ADMIN_SMTP_STARTTLS=1
+RADIUS_ADMIN_SMTP_USERNAME=radiuspilot@your-domain.com
+RADIUS_ADMIN_SMTP_PASSWORD=replace-with-an-app-password
+RADIUS_ADMIN_SMTP_FROM=RadiusPilot <radiuspilot@your-domain.com>

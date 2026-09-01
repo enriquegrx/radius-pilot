@@ -46,6 +46,7 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .login-brand h1 { font-size: 1.5rem; margin: 0; }
 .login-brand p,.login-note { color: #667085; margin: 0; }
 .login-card { border: 0; box-shadow: 0 18px 60px rgba(16,36,62,.12); }
+.secret-link { font-family: var(--tblr-font-monospace); overflow-wrap: anywhere; resize: none; }
 .login-note { font-size: .8125rem; text-align: center; }
 .enrollment-page { align-items: center; display: flex; justify-content: center; min-height: 100vh; padding: 1rem; }
 .enrollment-card { border: 0; box-shadow: 0 18px 60px rgba(16,36,62,.14); max-width: 480px; width: 100%; }

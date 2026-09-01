@@ -17,6 +17,8 @@ def fake_helper(operation: str, _payload=None):
         return {"ok": True, "events": [], "auth_events": []}
     if operation == "backups":
         return {"ok": True, "backups": []}
+    if operation == "invite-list":
+        return {"ok": True, "invitations": []}
     if operation == "panel-status":
         return {"ok": True, "panel_access": True}
     assert operation == "list"
@@ -35,6 +37,7 @@ def fake_helper(operation: str, _payload=None):
                 "last_auth": None,
                 "panel_access": True,
                 "duo_enrollment_active": False,
+                "credential_scheme": "bcrypt",
                 "created_at": "2026-09-01T06:00:00+00:00",
                 "updated_at": "2026-09-01T06:00:00+00:00",
             }
@@ -73,3 +76,24 @@ def test_dashboard_renders_user_without_password(monkeypatch) -> None:
 def test_health_endpoint() -> None:
     response = TestClient(app_module.app).get("/healthz")
     assert response.json() == {"status": "ok"}
+
+
+def test_invitation_page_never_exposes_existing_password(monkeypatch) -> None:
+    def invitation_helper(operation: str, _payload=None):
+        assert operation == "invite-status"
+        return {
+            "ok": True,
+            "invitation": {
+                "username": "new-user",
+                "email": "new-user@example.test",
+                "duo_required": True,
+                "expires_at": "2030-01-01T00:00:00+00:00",
+            },
+        }
+
+    monkeypatch.setattr(app_module, "call_helper", invitation_helper)
+    response = TestClient(app_module.app).get("/invite/" + "A" * 43)
+    assert response.status_code == 200
+    assert "Welcome, new-user" in response.text
+    assert "Choose your VPN password" in response.text
+    assert "existing password" not in response.text

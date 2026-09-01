@@ -12,6 +12,7 @@ import logging
 import os
 import pwd
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -25,9 +26,14 @@ from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 
+import bcrypt
+
 USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
-AUTHORIZE_LINE = re.compile(
+CLEAR_AUTHORIZE_LINE = re.compile(
     r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
+)
+CRYPT_AUTHORIZE_LINE = re.compile(
+    r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Crypt-Password\s*:=\s*"([^"\\]+)"\s*$'
 )
 OPERATIONS = {
     "bootstrap",
@@ -52,6 +58,12 @@ OPERATIONS = {
     "duo-check",
     "duo-enroll",
     "duo-enrollment",
+    "migrate-passwords",
+    "invite-create",
+    "invite-list",
+    "invite-status",
+    "invite-accept",
+    "invite-revoke",
 }
 DUO_BEGIN = "# BEGIN RADIUS USER ADMIN EXEMPTIONS"
 DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
@@ -98,6 +110,29 @@ def clean_password(value: object) -> str:
     return password
 
 
+def hash_password(password: object) -> str:
+    return bcrypt.hashpw(clean_password(password).encode(), bcrypt.gensalt(rounds=12)).decode()
+
+
+def clean_password_hash(value: object) -> str:
+    password_hash = str(value or "")
+    if not re.fullmatch(r"\$2[aby]\$12\$[./A-Za-z0-9]{53}", password_hash):
+        raise AdminError("The stored VPN password hash is invalid.")
+    return password_hash
+
+
+def password_matches(user: dict[str, Any], password: object) -> bool:
+    supplied = str(password or "")
+    if "password_hash" in user:
+        try:
+            return bcrypt.checkpw(
+                supplied.encode(), clean_password_hash(user["password_hash"]).encode()
+            )
+        except (ValueError, TypeError):
+            return False
+    return hmac.compare_digest(supplied, str(user.get("password") or ""))
+
+
 def clean_optional_time(value: object, field: str) -> str | None:
     raw = str(value or "").strip()
     if not raw:
@@ -122,6 +157,21 @@ def clean_reason(value: object) -> str:
     if len(reason) > 160 or any(ord(char) < 32 for char in reason):
         raise AdminError("The reason must contain at most 160 printable characters.")
     return reason
+
+
+def clean_email(value: object) -> str:
+    email = str(value or "").strip().lower()
+    if not email:
+        return ""
+    if (
+        len(email) > 254
+        or email.count("@") != 1
+        or not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+", email)
+        or email.endswith(".")
+        or ".." in email
+    ):
+        raise AdminError("Enter a valid invitation email address.")
+    return email
 
 
 def clean_admin_username(value: object) -> str:
@@ -150,6 +200,7 @@ class Store:
         auth_events_path: Path = Path("/opt/duoauthproxy/log/authevents.log"),
         certificate_path: Path = Path("/etc/ssl/radius-user-admin/fullchain.pem"),
         enrollment_path: Path = Path("/var/lib/radius-user-admin/duo-enrollments.json"),
+        invitation_path: Path = Path("/var/lib/radius-user-admin/invitations.json"),
         duo_enroll_config_path: Path = Path("/etc/radius-user-admin/duo-enroll-api.json"),
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
@@ -163,6 +214,7 @@ class Store:
         self.auth_events_path = auth_events_path
         self.certificate_path = certificate_path
         self.enrollment_path = enrollment_path
+        self.invitation_path = invitation_path
         self.duo_enroll_config_path = duo_enroll_config_path
         self.runner = runner
 
@@ -190,14 +242,20 @@ class Store:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            match = AUTHORIZE_LINE.fullmatch(stripped)
-            if not match:
+            clear_match = CLEAR_AUTHORIZE_LINE.fullmatch(stripped)
+            crypt_match = CRYPT_AUTHORIZE_LINE.fullmatch(stripped)
+            if not clear_match and not crypt_match:
                 raise AdminError("The existing authorize file contains an unmanaged entry.")
             stamp = now()
+            credential = (
+                {"password": decode_radius(clear_match.group(2))}
+                if clear_match
+                else {"password_hash": clean_password_hash(crypt_match.group(2))}
+            )
             users.append(
                 {
-                    "username": match.group(1),
-                    "password": decode_radius(match.group(2)),
+                    "username": (clear_match or crypt_match).group(1),
+                    **credential,
                     "enabled": True,
                     "duo_required": True,
                     "expires_at": None,
@@ -210,15 +268,23 @@ class Store:
         if not users:
             raise AdminError("The existing authorize file contains no users.")
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._atomic_json({"version": 1, "users": users})
+        self._atomic_json({"version": 2, "users": users})
 
     def load(self) -> dict[str, Any]:
         if not self.state_path.exists():
             raise AdminError("User state has not been bootstrapped.")
         data = json.loads(self.state_path.read_text())
-        if data.get("version") != 1 or not isinstance(data.get("users"), list):
+        if data.get("version") not in {1, 2} or not isinstance(data.get("users"), list):
             raise AdminError("User state has an unsupported format.")
         for user in data["users"]:
+            has_clear = "password" in user
+            has_hash = "password_hash" in user
+            if has_clear == has_hash:
+                raise AdminError("Each user must have exactly one VPN credential.")
+            if has_clear:
+                clean_password(user["password"])
+            else:
+                clean_password_hash(user["password_hash"])
             user.setdefault("duo_required", True)
             user.setdefault("expires_at", None)
             user.setdefault("duo_bypass_until", None)
@@ -255,8 +321,199 @@ class Store:
             public["last_auth"] = auth.get(item["username"])
             public["panel_access"] = item["username"] in panel_admins
             public["duo_enrollment_active"] = item["username"] in active_enrollments
+            public["credential_scheme"] = (
+                "bcrypt" if "password_hash" in item else "legacy-cleartext"
+            )
             users.append(public)
         return {"users": users, "health": self.health()}
+
+    def invitation_list(self) -> list[dict[str, Any]]:
+        current = datetime.now(UTC)
+        invitations = []
+        for invitation in self._load_invitations()["invitations"]:
+            expires = datetime.fromisoformat(invitation["expires_at"]).astimezone(UTC)
+            invitations.append(
+                {
+                    "username": invitation["username"],
+                    "email": invitation.get("email", ""),
+                    "duo_required": bool(invitation["duo_required"]),
+                    "created_at": invitation["created_at"],
+                    "expires_at": invitation["expires_at"],
+                    "used_at": invitation.get("used_at"),
+                    "status": (
+                        "accepted"
+                        if invitation.get("used_at")
+                        else "expired"
+                        if expires <= current
+                        else "pending"
+                    ),
+                }
+            )
+        return sorted(invitations, key=lambda item: item["created_at"], reverse=True)
+
+    def invite_create(
+        self,
+        username: object,
+        email: object,
+        duo_required: object,
+        valid_hours: object = 24,
+    ) -> dict[str, Any]:
+        clean = clean_username(username)
+        clean_address = clean_email(email)
+        require_duo = self._clean_bool(duo_required, "authentication mode")
+        try:
+            hours = int(valid_hours)
+        except (TypeError, ValueError) as exc:
+            raise AdminError("Invitation lifetime must be a whole number of hours.") from exc
+        if not 1 <= hours <= 168:
+            raise AdminError("Invitation lifetime must be between 1 and 168 hours.")
+        token = secrets.token_urlsafe(32)
+        created = datetime.now(UTC)
+        expires = datetime.fromtimestamp(created.timestamp() + hours * 3600, UTC)
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if any(user["username"] == clean for user in self.load()["users"]):
+                raise AdminError("That username already exists.")
+            data = self._load_invitations()
+            data["invitations"] = [
+                invitation
+                for invitation in data["invitations"]
+                if invitation["username"] != clean or invitation.get("used_at")
+            ]
+            data["invitations"].append(
+                {
+                    "token_digest": self._invitation_digest(token),
+                    "username": clean,
+                    "email": clean_address,
+                    "duo_required": require_duo,
+                    "created_at": created.isoformat(timespec="seconds"),
+                    "expires_at": expires.isoformat(timespec="seconds"),
+                    "used_at": None,
+                }
+            )
+            self._write_invitations(data)
+        return {
+            "token": token,
+            "username": clean,
+            "email": clean_address,
+            "expires_at": expires.isoformat(timespec="seconds"),
+        }
+
+    def invite_status(self, token: object) -> dict[str, Any]:
+        invitation = self._active_invitation(token)
+        return {
+            key: invitation[key]
+            for key in ("username", "email", "duo_required", "expires_at")
+        }
+
+    def invite_accept(self, token: object, password: object) -> dict[str, Any]:
+        clean_password_value = clean_password(password)
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            invitations = self._load_invitations()
+            invitation = self._active_invitation(token, invitations)
+            username = invitation["username"]
+            data = self.load()
+            if any(user["username"] == username for user in data["users"]):
+                raise AdminError("That VPN account already exists.")
+            stamp = now()
+            data["users"].append(
+                {
+                    "username": username,
+                    "password_hash": hash_password(clean_password_value),
+                    "enabled": True,
+                    "duo_required": bool(invitation["duo_required"]),
+                    "expires_at": None,
+                    "duo_bypass_until": None,
+                    "duo_bypass_reason": (
+                        "" if invitation["duo_required"] else "Invitation bootstrap"
+                    ),
+                    "created_at": stamp,
+                    "updated_at": stamp,
+                }
+            )
+            data["version"] = 2
+            self._commit(data)
+            invitation["used_at"] = stamp
+            self._write_invitations(invitations)
+
+        result: dict[str, Any] = {
+            "username": username,
+            "duo_required": bool(invitation["duo_required"]),
+            "enrollment": None,
+        }
+        if invitation["duo_required"]:
+            try:
+                readiness = self.duo_check(username)
+                if readiness["result"] == "enroll":
+                    result["enrollment"] = self.duo_enroll(username)
+                elif readiness["result"] != "auth" or not readiness["push_capable"]:
+                    result["duo_warning"] = readiness["status"]
+            except AdminError as exc:
+                result["duo_warning"] = str(exc)
+        return result
+
+    def invite_revoke(self, username: object) -> None:
+        clean = clean_username(username)
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = self._load_invitations()
+            before = len(data["invitations"])
+            data["invitations"] = [
+                invitation
+                for invitation in data["invitations"]
+                if invitation["username"] != clean or invitation.get("used_at")
+            ]
+            if len(data["invitations"]) == before:
+                raise AdminError("No pending invitation was found for that user.")
+            self._write_invitations(data)
+
+    def _load_invitations(self) -> dict[str, Any]:
+        if not self.invitation_path.exists():
+            return {"version": 1, "invitations": []}
+        try:
+            data = json.loads(self.invitation_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AdminError("Invitation state is unavailable.") from exc
+        if data.get("version") != 1 or not isinstance(data.get("invitations"), list):
+            raise AdminError("Invitation state has an unsupported format.")
+        return data
+
+    def _write_invitations(self, data: dict[str, Any]) -> None:
+        self._atomic_write(self.invitation_path, json.dumps(data, indent=2) + "\n", 0o600)
+
+    @staticmethod
+    def _invitation_digest(token: object) -> str:
+        value = str(token or "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", value):
+            raise AdminError("The invitation link is invalid.")
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    def _active_invitation(
+        self, token: object, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        digest = self._invitation_digest(token)
+        invitations = (data or self._load_invitations())["invitations"]
+        invitation = next(
+            (
+                item
+                for item in invitations
+                if hmac.compare_digest(str(item.get("token_digest") or ""), digest)
+            ),
+            None,
+        )
+        if not invitation or invitation.get("used_at"):
+            raise AdminError("The invitation is invalid or has already been used.")
+        try:
+            expires = datetime.fromisoformat(invitation["expires_at"]).astimezone(UTC)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AdminError("The invitation is invalid.") from exc
+        if expires <= datetime.now(UTC):
+            raise AdminError("The invitation has expired.")
+        return invitation
 
     def health(self) -> dict[str, Any]:
         active = (
@@ -369,7 +626,7 @@ class Store:
                 users.append(
                     {
                         "username": username,
-                        "password": clean_password(payload.get("password")),
+                        "password_hash": hash_password(payload.get("password")),
                         "enabled": True,
                         "duo_required": duo_required,
                         "expires_at": expires_at,
@@ -409,7 +666,8 @@ class Store:
                             )
                         admin_data = self._rename_panel_admin(username, new_username)
                 elif operation == "reset-password":
-                    user["password"] = clean_password(payload.get("password"))
+                    user["password_hash"] = hash_password(payload.get("password"))
+                    user.pop("password", None)
                     user["updated_at"] = now()
                 elif operation == "set-enabled":
                     enabled = self._clean_bool(payload.get("enabled"), "account status")
@@ -453,7 +711,30 @@ class Store:
                 else:
                     raise AdminError("Unsupported operation.")
 
+            data["version"] = 2
             self._commit(data, admin_data=admin_data)
+
+    def migrate_passwords(self, username: object = None) -> list[str]:
+        """Replace legacy clear-text VPN credentials with bcrypt hashes."""
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = self.load()
+            selected = clean_username(username) if username else None
+            if selected and not any(user["username"] == selected for user in data["users"]):
+                raise AdminError("User not found.")
+            migrated = []
+            for user in data["users"]:
+                if "password" not in user or (selected and user["username"] != selected):
+                    continue
+                user["password_hash"] = hash_password(user.pop("password"))
+                user["updated_at"] = now()
+                migrated.append(user["username"])
+            if not migrated:
+                return []
+            data["version"] = 2
+            self._commit(data)
+            return migrated
 
     def sync(self) -> None:
         """Render managed files from the current state without changing a user."""
@@ -508,9 +789,14 @@ class Store:
         lines = ["# Generated by radius-user-admin. Do not edit by hand."]
         for user in sorted(data["users"], key=lambda item: item["username"]):
             if self._effective_enabled(user):
-                lines.append(
-                    f'{user["username"]} Cleartext-Password := "{encode_radius(user["password"])}"'
-                )
+                if "password_hash" in user:
+                    password_hash = clean_password_hash(user["password_hash"])
+                    lines.append(f'{user["username"]} Crypt-Password := "{password_hash}"')
+                else:
+                    lines.append(
+                        f'{user["username"]} Cleartext-Password := '
+                        f'"{encode_radius(user["password"])}"'
+                    )
         return "\n".join(lines) + "\n"
 
     def _render_duo(self, original: str, data: dict[str, Any]) -> str:
@@ -649,7 +935,7 @@ class Store:
             raise AdminError("User not found.")
         user = next(user for user in self.load()["users"] if user["username"] == clean)
         enabled_bool = self._clean_bool(enabled, "panel access")
-        if enabled_bool and str(password or "") == user["password"]:
+        if enabled_bool and password_matches(user, password):
             raise AdminError("The console password must differ from the VPN password.")
         if enabled_bool:
             readiness = self.duo_check(clean)
@@ -810,11 +1096,18 @@ class Store:
         if not source.is_file():
             raise AdminError("Backup not found.")
         data = json.loads(source.read_text())
-        if data.get("version") != 1 or not isinstance(data.get("users"), list):
+        if data.get("version") not in {1, 2} or not isinstance(data.get("users"), list):
             raise AdminError("The backup contains unsupported user data.")
         for user in data["users"]:
             clean_username(user.get("username"))
-            clean_password(user.get("password"))
+            has_clear = "password" in user
+            has_hash = "password_hash" in user
+            if has_clear == has_hash:
+                raise AdminError("The backup contains an invalid VPN credential.")
+            if has_clear:
+                clean_password(user.get("password"))
+            else:
+                clean_password_hash(user.get("password_hash"))
             user.setdefault("duo_required", True)
             user.setdefault("expires_at", None)
             user.setdefault("duo_bypass_until", None)
@@ -1171,6 +1464,31 @@ def main() -> int:
             result = {"enrollment": store.duo_enroll(payload.get("username"))}
         elif args.operation == "duo-enrollment":
             result = {"enrollment": store.duo_enrollment(payload.get("username"))}
+        elif args.operation == "migrate-passwords":
+            result = {"migrated": store.migrate_passwords(payload.get("username"))}
+        elif args.operation == "invite-create":
+            result = {
+                "invitation": store.invite_create(
+                    payload.get("username"),
+                    payload.get("email"),
+                    payload.get("duo_required"),
+                    payload.get("valid_hours", 24),
+                )
+            }
+        elif args.operation == "invite-list":
+            result = {"invitations": store.invitation_list()}
+        elif args.operation == "invite-status":
+            result = {"invitation": store.invite_status(payload.get("token"))}
+        elif args.operation == "invite-accept":
+            result = {
+                "invitation": store.invite_accept(
+                    payload.get("token"), payload.get("password")
+                )
+            }
+            target = result["invitation"]["username"]
+        elif args.operation == "invite-revoke":
+            store.invite_revoke(payload.get("username"))
+            result = {}
         elif args.operation == "set-panel-access":
             store.set_panel_access(
                 payload.get("username"),
@@ -1202,9 +1520,20 @@ def main() -> int:
             "set-admin-password",
             "set-panel-access",
             "duo-enroll",
+            "migrate-passwords",
+            "invite-create",
+            "invite-accept",
+            "invite-revoke",
             "reconcile",
         }:
-            detail = ", ".join(result.get("changes", [])) if args.operation == "reconcile" else ""
+            detail_items = (
+                result.get("changes", [])
+                if args.operation == "reconcile"
+                else result.get("migrated", [])
+                if args.operation == "migrate-passwords"
+                else []
+            )
+            detail = ", ".join(detail_items)
             store.record_audit(
                 actor=actor,
                 source_ip=source_ip,

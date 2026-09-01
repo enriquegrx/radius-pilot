@@ -24,6 +24,7 @@
             {% endif %}
             <span class="admin-identity">{{ admin }}</span>
             <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost-secondary btn-sm">Sign out</button></form>
+            <button class="btn btn-outline-primary" type="button" data-dialog-open="invite-modal">Invite user</button>
             <button class="btn btn-primary" type="button" data-dialog-open="create-modal">Add user</button>
           </div>
         </div>
@@ -61,13 +62,21 @@
                     <td>{% if user.effective_duo_required %}<span class="badge bg-blue-lt">Duo Push</span>{% else %}<span class="badge bg-yellow-lt">Password only</span>{% if user.duo_bypass_reason %}<div class="small text-secondary mt-1" title="{{ user.duo_bypass_reason }}">{{ user.duo_bypass_reason[:28] }}{% if user.duo_bypass_reason|length > 28 %}…{% endif %}</div>{% endif %}{% endif %}</td>
                     <td class="text-secondary">{% if user.last_auth %}<span class="auth-status auth-{{ user.last_auth.status | lower }}">{{ user.last_auth.status }}</span><div class="small">{{ user.last_auth.timestamp[:16] | replace('T', ' ') }} UTC</div>{% else %}Never recorded{% endif %}</td>
                     <td class="text-secondary">{% if user.expires_at %}{{ user.expires_at[:16] | replace('T', ' ') }} UTC{% else %}No expiry{% endif %}</td>
-                    <td><button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}" data-panel-access="{{ 'true' if user.panel_access else 'false' }}" data-duo-enrollment-active="{{ 'true' if user.duo_enrollment_active else 'false' }}" data-expires-at="{{ user.expires_at or '' }}" data-bypass-until="{{ user.duo_bypass_until or '' }}" data-bypass-reason="{{ user.duo_bypass_reason }}">Manage</button></td>
+                    <td><button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}" data-panel-access="{{ 'true' if user.panel_access else 'false' }}" data-duo-enrollment-active="{{ 'true' if user.duo_enrollment_active else 'false' }}" data-credential-scheme="{{ user.credential_scheme }}" data-expires-at="{{ user.expires_at or '' }}" data-bypass-until="{{ user.duo_bypass_until or '' }}" data-bypass-reason="{{ user.duo_bypass_reason }}">Manage</button></td>
                   </tr>
                   {% else %}<tr><td colspan="6"><div class="empty py-5"><p class="empty-title">No users available</p></div></td></tr>{% endfor %}
                   <tr id="no-filter-results" hidden><td colspan="6" class="text-center text-secondary py-5">No users match this search.</td></tr>
                 </tbody>
               </table></div>
             </div>
+            {% if invitations %}
+            <div class="card mt-3">
+              <div class="card-header"><div><h3 class="card-title mb-1">Recent invitations</h3><div class="text-secondary small">Tokens are stored as one-way digests and are never shown again.</div></div></div>
+              <div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>User</th><th>Email</th><th>Status</th><th>Expires</th><th></th></tr></thead><tbody>
+              {% for invitation in invitations[:10] %}<tr><td>{{ invitation.username }}</td><td class="text-secondary">{{ invitation.email or 'Not emailed' }}</td><td><span class="badge {{ 'bg-green-lt' if invitation.status == 'accepted' else 'bg-yellow-lt' if invitation.status == 'pending' else 'bg-red-lt' }}">{{ invitation.status }}</span></td><td class="text-secondary">{{ invitation.expires_at[:16] | replace('T', ' ') }} UTC</td><td class="text-end">{% if invitation.status == 'pending' %}<form method="post" action="/invitations/{{ invitation.username | urlencode }}/revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-outline-danger btn-sm">Revoke</button></form>{% endif %}</td></tr>{% endfor %}
+              </tbody></table></div>
+            </div>
+            {% endif %}
           </section>
 
           <section id="activity" class="console-section">
@@ -105,6 +114,17 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-primary">Create user</button></div>
     </form></dialog>
 
+    <dialog class="admin-dialog" id="invite-modal" aria-labelledby="invite-title"><form class="modal-content" method="post" action="/invitations">
+      <div class="modal-header"><h2 class="modal-title" id="invite-title">Invite VPN user</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
+      <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="mb-3"><label class="form-label" for="invite-username">Username</label><input class="form-control" id="invite-username" name="username" required maxlength="64" pattern="[a-z0-9][a-z0-9._@-]{0,63}" autocomplete="off"></div>
+        <div class="mb-3"><label class="form-label" for="invite-email">Email</label><input class="form-control" id="invite-email" name="email" type="email" maxlength="254" autocomplete="email"><small class="form-hint">Optional. Without SMTP, the link is shown once for manual delivery.</small></div>
+        <div class="mb-3"><label class="form-label" for="invite-duo">Authentication</label><select class="form-select" id="invite-duo" name="duo_required"><option value="true" selected>Password + Duo Push</option><option value="false">Password only</option></select></div>
+        <div><label class="form-label" for="invite-hours">Link lifetime</label><select class="form-select" id="invite-hours" name="valid_hours"><option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-primary">Create invitation</button></div>
+    </form></dialog>
+
     <dialog class="admin-dialog" id="action-modal" aria-labelledby="action-title"><form class="modal-content" id="action-form" method="post">
       <div class="modal-header"><h2 class="modal-title" id="action-title">Manage user</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
       <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div id="action-description" class="text-secondary mb-3"></div><div id="action-field"></div></div>
@@ -117,6 +137,6 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-warning">Restore backup</button></div>
     </form></dialog>
 
-    <script src="{{ url_for('static', path='app.js') }}?v=20260901-7"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260901-8"></script>
   </body>
 </html>

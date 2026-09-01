@@ -61,6 +61,7 @@ port=1812
         auth_events_path=tmp_path / "authevents.log",
         certificate_path=tmp_path / "fullchain.pem",
         enrollment_path=tmp_path / "state/duo-enrollments.json",
+        invitation_path=tmp_path / "state/invitations.json",
         duo_enroll_config_path=tmp_path / "duo-enroll-api.json",
         runner=Runner(),
     )
@@ -74,6 +75,68 @@ def test_bootstrap_and_list_never_expose_password(store: Store) -> None:
     assert "password" not in response["users"][0]
     assert response["users"][0]["duo_required"] is True
     assert json.loads(store.state_path.read_text())["users"][0]["password"]
+
+
+def test_new_and_reset_credentials_are_bcrypt_hashes(store: Store) -> None:
+    password = "a-safe-password-2026"
+    store.mutate(
+        "create",
+        {"username": "new-user", "password": password, "duo_required": True},
+    )
+    user = next(item for item in store.load()["users"] if item["username"] == "new-user")
+    assert "password" not in user
+    assert user["password_hash"].startswith("$2b$12$")
+    assert admin_helper.password_matches(user, password)
+    authorize = store.authorize_path.read_text()
+    assert f'new-user Crypt-Password := "{user["password_hash"]}"' in authorize
+    assert password not in authorize
+
+    replacement = "a-different-password-2026"
+    store.mutate("reset-password", {"username": "new-user", "password": replacement})
+    user = next(item for item in store.load()["users"] if item["username"] == "new-user")
+    assert admin_helper.password_matches(user, replacement)
+    assert not admin_helper.password_matches(user, password)
+
+
+def test_legacy_credential_migration_is_scoped_and_reversible(store: Store) -> None:
+    original = "long-enough-password"
+    migrated = store.migrate_passwords("vpn-test-user")
+    assert migrated == ["vpn-test-user"]
+    user = store.load()["users"][0]
+    assert "password" not in user
+    assert admin_helper.password_matches(user, original)
+    assert "Crypt-Password" in store.authorize_path.read_text()
+    assert original not in store.state_path.read_text()
+    assert original not in store.authorize_path.read_text()
+    assert store.migrate_passwords("vpn-test-user") == []
+
+
+def test_one_time_invitation_creates_bcrypt_user_without_storing_token(store: Store) -> None:
+    invitation = store.invite_create(
+        "invited-user", "person@example.test", False, valid_hours=24
+    )
+    token = invitation["token"]
+    invitation_state = store.invitation_path.read_text()
+    assert token not in invitation_state
+    assert store.invitation_path.stat().st_mode & 0o777 == 0o600
+    assert store.invite_status(token)["username"] == "invited-user"
+    assert store.invitation_list()[0]["status"] == "pending"
+
+    result = store.invite_accept(token, "a-new-invited-password-2026")
+    assert result["username"] == "invited-user"
+    user = next(item for item in store.load()["users"] if item["username"] == "invited-user")
+    assert "password" not in user
+    assert admin_helper.password_matches(user, "a-new-invited-password-2026")
+    assert store.invitation_list()[0]["status"] == "accepted"
+    with pytest.raises(AdminError, match="already been used"):
+        store.invite_status(token)
+
+
+def test_pending_invitation_can_be_revoked(store: Store) -> None:
+    invitation = store.invite_create("invited-user", "", True, valid_hours=1)
+    store.invite_revoke("invited-user")
+    with pytest.raises(AdminError, match="invalid"):
+        store.invite_status(invitation["token"])
 
 
 def test_create_then_block_updates_generated_authorize(store: Store) -> None:

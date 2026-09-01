@@ -5,9 +5,12 @@ import io
 import ipaddress
 import os
 import secrets
+import smtplib
+import ssl
 import time
 from collections import defaultdict, deque
 from datetime import UTC, datetime
+from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -29,11 +32,19 @@ LOGIN_LOCKOUT = 15 * 60
 LOCAL_ZONE = ZoneInfo("Europe/Madrid")
 LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
 LOGIN_LOCKED_UNTIL: dict[str, float] = {}
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get(
+        "RADIUS_ADMIN_ALLOWED_HOSTS",
+        "radius.your-domain.com,127.0.0.1,localhost,testserver",
+    ).split(",")
+    if host.strip()
+]
 
 app = FastAPI(title="RadiusPilot", docs_url=None, redoc_url=None)
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["radius.your-domain.com", "127.0.0.1", "localhost", "testserver"],
+    allowed_hosts=ALLOWED_HOSTS,
 )
 app.add_middleware(
     SessionMiddleware,
@@ -138,6 +149,55 @@ def utc_form_time(value: str) -> str | None:
     return parsed.astimezone(UTC).isoformat(timespec="seconds")
 
 
+def invitation_url(request: Request, token: str) -> str:
+    configured = os.environ.get("RADIUS_ADMIN_PUBLIC_URL", "").rstrip("/")
+    base = configured or str(request.base_url).rstrip("/")
+    if not base.startswith(("https://", "http://testserver")):
+        raise HelperError("The configured public URL must use HTTPS.")
+    return f"{base}/invite/{quote(token, safe='')}"
+
+
+def send_invitation_email(recipient: str, username: str, url: str, expires_at: str) -> bool:
+    host = os.environ.get("RADIUS_ADMIN_SMTP_HOST", "").strip()
+    if not host or not recipient:
+        return False
+    try:
+        port = int(os.environ.get("RADIUS_ADMIN_SMTP_PORT", "587"))
+    except ValueError as exc:
+        raise HelperError("The SMTP port is invalid.") from exc
+    message = EmailMessage()
+    message["Subject"] = "Your RadiusPilot VPN invitation"
+    message["From"] = os.environ.get(
+        "RADIUS_ADMIN_SMTP_FROM", "RadiusPilot <radiuspilot@your-domain.com>"
+    )
+    message["To"] = recipient
+    message.set_content(
+        "\n".join(
+            [
+                f"Hello {username},",
+                "",
+                "Use this one-time link from an approved LAN or VPN network to finish setup:",
+                url,
+                "",
+                f"The invitation expires at {expires_at}.",
+                "If you were not expecting this invitation, ignore this message.",
+            ]
+        )
+    )
+    try:
+        with smtplib.SMTP(host, port, timeout=10) as smtp:
+            if os.environ.get("RADIUS_ADMIN_SMTP_STARTTLS", "1") == "1":
+                smtp.starttls(context=ssl.create_default_context())
+            username_env = os.environ.get("RADIUS_ADMIN_SMTP_USERNAME", "")
+            password_env = os.environ.get("RADIUS_ADMIN_SMTP_PASSWORD", "")
+            if username_env:
+                smtp.login(username_env, password_env)
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise HelperError("The invitation was created, but email delivery failed.") from exc
+    return True
+
+
 @app.get("/login")
 def login_page(request: Request, error: str = ""):
     if current_admin(request):
@@ -210,10 +270,11 @@ def index(request: Request, message: str = "", level: str = "success"):
         data = call_helper("list")
         activity = call_helper("audit")
         backups = call_helper("backups")["backups"]
+        invitations = call_helper("invite-list")["invitations"]
         users = data["users"]
         health = data["health"]
     except HelperError as exc:
-        users, backups, error = [], [], str(exc)
+        users, backups, invitations, error = [], [], [], str(exc)
         activity = {"events": [], "auth_events": []}
         health = {
             "active": False,
@@ -234,6 +295,7 @@ def index(request: Request, message: str = "", level: str = "success"):
             "audit_events": activity["events"],
             "auth_events": activity["auth_events"],
             "backups": backups,
+            "invitations": invitations,
             "message": message,
             "level": level if level in {"success", "danger", "warning"} else "success",
             "error": error,
@@ -254,6 +316,127 @@ def index(request: Request, message: str = "", level: str = "success"):
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/invitations")
+def create_invitation(
+    request: Request,
+    csrf: str = Form(),
+    username: str = Form(),
+    email: str = Form(default=""),
+    duo_required: bool = Form(default=True),
+    valid_hours: int = Form(default=24),
+):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    try:
+        check_csrf(request, csrf)
+        result = call_helper(
+            "invite-create",
+            helper_payload(
+                request,
+                {
+                    "username": username,
+                    "email": email,
+                    "duo_required": duo_required,
+                    "valid_hours": valid_hours,
+                },
+            ),
+        )["invitation"]
+        url = invitation_url(request, result["token"])
+        delivered = send_invitation_email(
+            result["email"], result["username"], url, result["expires_at"]
+        )
+    except HelperError as exc:
+        return redirect(str(exc), "danger", "users")
+    return templates.TemplateResponse(
+        request,
+        "invitation_created.html",
+        {
+            "admin": admin,
+            "csrf": csrf_token(request),
+            "username": result["username"],
+            "email": result["email"],
+            "expires_at": result["expires_at"],
+            "invitation_url": url,
+            "delivered": delivered,
+        },
+    )
+
+
+@app.post("/invitations/{username}/revoke")
+def revoke_invitation(username: str, request: Request, csrf: str = Form()):
+    return mutate(request, csrf, "invite-revoke", {"username": username})
+
+
+@app.get("/invite/{token}")
+def invitation_page(token: str, request: Request):
+    try:
+        invitation = call_helper("invite-status", {"token": token})["invitation"]
+    except HelperError as exc:
+        return templates.TemplateResponse(
+            request,
+            "invite_accept.html",
+            {"error": str(exc), "csrf": csrf_token(request), "token": ""},
+            status_code=410,
+        )
+    return templates.TemplateResponse(
+        request,
+        "invite_accept.html",
+        {
+            "error": "",
+            "csrf": csrf_token(request),
+            "token": token,
+            "invitation": invitation,
+        },
+    )
+
+
+@app.post("/invite/{token}")
+def accept_invitation(
+    token: str,
+    request: Request,
+    csrf: str = Form(),
+    password: str = Form(),
+    password_confirm: str = Form(),
+):
+    try:
+        check_csrf(request, csrf)
+        if not secrets.compare_digest(password, password_confirm):
+            raise HelperError("The passwords do not match.")
+        result = call_helper(
+            "invite-accept",
+            {"token": token, "password": password, "_source_ip": source_ip(request)},
+        )["invitation"]
+    except HelperError as exc:
+        try:
+            invitation = call_helper("invite-status", {"token": token})["invitation"]
+        except HelperError:
+            invitation = None
+        return templates.TemplateResponse(
+            request,
+            "invite_accept.html",
+            {
+                "error": str(exc),
+                "csrf": csrf_token(request),
+                "token": token,
+                "invitation": invitation,
+            },
+            status_code=400,
+        )
+    enrollment = result.get("enrollment") or {}
+    return templates.TemplateResponse(
+        request,
+        "invite_complete.html",
+        {
+            "username": result["username"],
+            "duo_required": result["duo_required"],
+            "duo_warning": result.get("duo_warning", ""),
+            "activation_url": enrollment.get("activation_url", ""),
+            "activation_barcode": enrollment.get("activation_barcode", ""),
+        },
+    )
 
 
 def mutate(
@@ -387,6 +570,11 @@ def reset_password(
     password: str = Form(),
 ):
     return mutate(request, csrf, "reset-password", {"username": username, "password": password})
+
+
+@app.post("/users/{username}/credential")
+def migrate_password(username: str, request: Request, csrf: str = Form()):
+    return mutate(request, csrf, "migrate-passwords", {"username": username})
 
 
 @app.post("/users/{username}/status")

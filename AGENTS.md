@@ -5,7 +5,8 @@
 This repository contains the small, local-only administration console for the
 Example Organization FreeRADIUS user file. Keep its scope narrow: list users, create users,
 choose per-user Duo enforcement, rename users, reset passwords, block/unblock
-users, create time-limited Duo Mobile enrollments through the Auth API, and
+users, create one-time account invitations, migrate legacy VPN credentials to
+bcrypt, create time-limited Duo Mobile enrollments through the Auth API, and
 delete users.
 
 ## Security boundaries
@@ -14,6 +15,9 @@ delete users.
 - Treat Duo activation URLs and QR codes as temporary credentials. Keep them in
   the root-only enrollment state, never place them in query strings or audit
   entries, and accept activation URLs only from HTTPS Duo Security hosts.
+- Treat invitation links as bearer credentials. Persist only a SHA-256 digest,
+  never include tokens in audit records, disable request logging for invitation
+  routes, and consume each token after the first successful password setup.
 - Console administrators use a separate scrypt-hashed secret and Duo Push. Do
   not accept VPN primary passwords as console passwords.
 - Panel access is an explicit role attached to a VPN username. Enforce Duo
@@ -50,6 +54,11 @@ delete users.
   is an explicit per-user choice and must remain scoped to this VPN integration.
 - Password-only mode requires a reason. Support a UTC expiry and automatically
   return to Duo when it elapses.
+- Invitation pages stay behind the existing LAN/VPN source allowlist. Do not
+  make onboarding a reason to publish the application to the WAN.
+- New and reset VPN credentials use bcrypt. Legacy clear-text credentials may
+  be migrated individually, with the existing backup, validation and rollback
+  path preserved.
 - Account expirations must be enforced by the reconciliation timer, not only by
   browser rendering.
 - Restores may only use exact helper-created backup identifiers. Always create a

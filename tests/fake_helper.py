@@ -27,6 +27,35 @@ elif sys.argv[1] == "audit":
     print(json.dumps({"ok": True, "events": [], "auth_events": []}))
 elif sys.argv[1] == "backups":
     print(json.dumps({"ok": True, "backups": []}))
+elif sys.argv[1] == "invite-list":
+    print(json.dumps({"ok": True, "invitations": []}))
+elif sys.argv[1] == "invite-status":
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "invitation": {
+                    "username": "demo-user",
+                    "email": "demo-user@example.test",
+                    "duo_required": True,
+                    "expires_at": "2030-01-01T00:00:00+00:00",
+                },
+            }
+        )
+    )
+elif sys.argv[1] == "invite-accept":
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "invitation": {
+                    "username": "demo-user",
+                    "duo_required": False,
+                    "enrollment": None,
+                },
+            }
+        )
+    )
 elif sys.argv[1] == "panel-status":
     print(json.dumps({"ok": True, "panel_access": True}))
 else:

@@ -1,5 +1,8 @@
 # RadiusPilot 🛡️
 
+[![CI](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml)
+
 A small web console for the VPN accounts authenticated by FreeRADIUS at Example Organization.
 It covers the jobs we actually need day to day: see who has access, add an
 account, enrol it in Duo, reset a password, block it, or remove it.
@@ -20,6 +23,10 @@ before it reaches the live authentication service.
 
 - Lists enabled and blocked users without exposing passwords.
 - Creates, renames, blocks, unblocks, and deletes accounts.
+- Creates one-time invitations so users can choose their own initial password
+  and continue directly into Duo Mobile enrollment.
+- Stores new and reset VPN credentials as bcrypt hashes. Existing clear-text
+  entries can be migrated one account at a time with backup and rollback.
 - Switches each enabled account between password plus Duo Push and password only.
 - Protects the console with a separate scrypt-hashed administrator password,
   Duo Push, a 30-minute idle timeout, CSRF protection, and login rate limiting.
@@ -78,6 +85,8 @@ The helper maintains:
   events with actor and source address, never credentials.
 - `/var/lib/radius-user-admin/duo-enrollments.json` — root-only temporary Duo
   activation links and expiry times.
+- `/var/lib/radius-user-admin/invitations.json` — root-only invitation metadata;
+  only SHA-256 token digests are retained, never the usable links.
 - `/etc/radius-user-admin/duo-enroll-api.json` — root-only credentials for the
   dedicated Auth API enrollment integration; this file must never enter Git.
 - `/var/backups/radius-user-admin/` — dated snapshots before every mutation.
@@ -95,6 +104,7 @@ vendored locally under its MIT license.
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest
+.venv/bin/pytest --cov=radius_user_admin --cov-fail-under=55
 .venv/bin/ruff check .
 ```
 
@@ -114,6 +124,35 @@ and a single sudoers entry. Do not bind Uvicorn to a LAN address or add public
 NAT. Certificate issuance and renewal use DNS-01 on `pki01`; the deploy hook
 copies the renewed files to `radius01`, tests Nginx, and reloads it.
 
+Copy `deploy/environment.example` to `/etc/radius-user-admin/environment`, set a
+random session secret and the real HTTPS URL, then keep the file readable only
+by root and the service account. SMTP is optional. Without it, a newly created
+invitation is displayed once for delivery through a trusted channel. Invitation
+pages remain behind the same LAN/VPN allowlist, and Nginx access logging is
+disabled so bearer tokens do not enter request logs.
+
+### Password migration
+
+New accounts and password resets use bcrypt automatically. Upgrade an existing
+installation gradually: migrate one test account, complete a real VPN login,
+then migrate the remainder. Every step creates a normal RadiusPilot backup and
+validates FreeRADIUS before restarting it.
+
+```bash
+printf '%s\n' '{"username":"pilot-user","_actor":"migration"}' \
+  | sudo /usr/local/sbin/radius-user-admin-helper migrate-passwords
+
+printf '%s\n' '{"_actor":"migration"}' \
+  | sudo /usr/local/sbin/radius-user-admin-helper migrate-passwords
+```
+
+Restoring the automatically created backup returns both the user state and the
+generated `authorize` file to their previous format.
+
 `radius-user-admin-reconcile.timer` runs every five minutes. It blocks expired
 accounts and restores Duo enforcement when a temporary password-only exception
 expires. No service restart occurs when there is nothing to change.
+
+GitHub Actions runs Ruff, the test suite, dependency auditing and CodeQL on the
+public repository. Dependabot keeps Python and workflow dependencies visible
+for review; production updates should still be pinned and tested before deploy.

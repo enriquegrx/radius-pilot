@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>VPN account ready · RadiusPilot</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-7">
+  </head>
+  <body>
+    <main class="enrollment-page"><div class="card enrollment-card"><div class="card-body text-center">
+      <div class="brand-mark enrollment-mark" aria-hidden="true">R</div>
+      <h1 class="h2 mt-3">Your VPN account is ready</h1>
+      <p class="text-secondary">The invitation for <strong>{{ username }}</strong> has been consumed.</p>
+      {% if activation_barcode %}
+        <p>Open Duo Mobile, tap <strong>Add</strong>, and scan this QR code.</p>
+        <img class="enrollment-qr" src="{{ activation_barcode }}" alt="Duo activation QR code for {{ username }}">
+        <a class="btn btn-primary w-100 mt-3" href="{{ activation_url }}" rel="noreferrer">Open in Duo Mobile</a>
+      {% elif duo_warning %}
+        <div class="alert alert-warning">The VPN account was created, but Duo still needs attention: {{ duo_warning }}</div>
+      {% elif duo_required %}
+        <div class="alert alert-success">Duo is already ready for this account.</div>
+      {% else %}
+        <div class="alert alert-success">This account uses password-only authentication.</div>
+      {% endif %}
+      <p class="small text-secondary mt-4 mb-0">You may close this page. The setup link cannot be used again.</p>
+    </div></div></main>
+  </body>
+</html>

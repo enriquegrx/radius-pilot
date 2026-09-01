@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Finish VPN setup · RadiusPilot</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-7">
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <div class="login-brand"><div class="brand-mark" aria-hidden="true">R</div><div><h1>RadiusPilot</h1><p>VPN account setup</p></div></div>
+      <div class="card login-card"><div class="card-body p-4">
+        <h2 class="h2 mb-2">{% if invitation %}Welcome, {{ invitation.username }}{% else %}Invitation unavailable{% endif %}</h2>
+        {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+        {% if invitation %}
+        <p class="text-secondary">Choose your VPN password. It will be stored as a bcrypt hash and the invitation will stop working immediately.</p>
+        <form method="post" action="/invite/{{ token }}"><input type="hidden" name="csrf" value="{{ csrf }}">
+          <div class="mb-3"><label class="form-label" for="password">VPN password</label><input class="form-control" id="password" name="password" type="password" minlength="14" maxlength="128" required autocomplete="new-password" autofocus></div>
+          <div class="mb-4"><label class="form-label" for="password-confirm">Confirm password</label><input class="form-control" id="password-confirm" name="password_confirm" type="password" minlength="14" maxlength="128" required autocomplete="new-password"></div>
+          <button class="btn btn-primary w-100">Create my VPN account</button>
+        </form>
+        {% endif %}
+      </div></div>
+      <p class="login-note">Internal access only · Never forward your invitation</p>
+    </main>
+  </body>
+</html>
