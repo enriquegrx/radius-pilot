@@ -147,7 +147,7 @@
       } else if (action === "duo") {
         const requireDuo = data.duoRequired !== "true";
         title.textContent = `${requireDuo ? "Require Duo Push" : "Use password only"} for ${user}?`;
-        description.textContent = requireDuo ? "Duo will be checked for an active, Push-capable device before the change." : "The password remains required. This exception applies only to the Example Organization VPN.";
+        description.textContent = requireDuo ? "Duo will be checked for an active, Push-capable device before the change." : "The password remains required. This exception applies only to this VPN integration.";
         field.innerHTML = `<div class="change-summary mb-3"><span>Authentication</span><strong>${requireDuo ? "Password only → Duo Push" : "Duo Push → Password only"}</strong></div><input type="hidden" name="duo_required" value="${requireDuo}">${requireDuo ? "" : `<div class="mb-3"><label class="form-label" for="bypass-reason">Reason for exception</label><input class="form-control" id="bypass-reason" name="duo_bypass_reason" maxlength="160" required value="${escapeHtml(data.bypassReason)}"></div><div><label class="form-label" for="bypass-until">Return to Duo automatically</label><input class="form-control" id="bypass-until" name="duo_bypass_until" type="datetime-local" value="${localDateTime(data.bypassUntil)}"><small class="form-hint">Recommended for every password-only exception.</small></div>`}`;
         form.action = `/users/${encode(user)}/duo`;
         submit.textContent = requireDuo ? "Verify and require Duo" : "Create exception";

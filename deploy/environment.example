@@ -3,6 +3,7 @@ RADIUS_ADMIN_SESSION_SECRET=replace-with-at-least-32-random-bytes
 RADIUS_ADMIN_SECURE_COOKIE=1
 RADIUS_ADMIN_PUBLIC_URL=https://radius.your-domain.com
 RADIUS_ADMIN_ALLOWED_HOSTS=radius.your-domain.com,127.0.0.1,localhost
+RADIUS_ADMIN_ORGANIZATION=Your Organization
 
 # Optional SMTP delivery for one-time invitations. Without this block, the
 # panel displays each invitation once so an administrator can copy it.

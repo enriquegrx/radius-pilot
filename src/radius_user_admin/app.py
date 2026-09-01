@@ -40,6 +40,11 @@ ALLOWED_HOSTS = [
     ).split(",")
     if host.strip()
 ]
+ORGANIZATION = os.environ.get("RADIUS_ADMIN_ORGANIZATION", "Your Organization").strip()
+
+
+def common_template_context(_request: Request) -> dict[str, str]:
+    return {"organization": ORGANIZATION or "Your Organization"}
 
 app = FastAPI(title="RadiusPilot", docs_url=None, redoc_url=None)
 app.add_middleware(
@@ -54,7 +59,9 @@ app.add_middleware(
     max_age=SESSION_TTL,
 )
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
-templates = Jinja2Templates(directory=BASE / "templates")
+templates = Jinja2Templates(
+    directory=BASE / "templates", context_processors=[common_template_context]
+)
 
 
 @app.middleware("http")
