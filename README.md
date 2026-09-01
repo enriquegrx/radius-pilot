@@ -263,3 +263,19 @@ expires. No service restart occurs when there is nothing to change.
 GitHub Actions runs Ruff, the test suite, dependency auditing and CodeQL on the
 public repository. Dependabot keeps Python and workflow dependencies visible
 for review; production updates should still be pinned and tested before deploy.
+
+### Release and deployment flow
+
+A push to GitHub **does not deploy RadiusPilot**. The repository workflows are
+validation-only and hold no production SSH credentials. A production release is
+an explicit operator action after CI succeeds: take a timestamped backup, copy
+the reviewed files over an approved administrative path, compile the Python
+modules, run the privileged bootstrap/reconciliation helper, validate the full
+FreeRADIUS configuration, restart only the web service, and check `/healthz`.
+If any step fails, restore the saved application files, user state, and managed
+`authorize` file before restarting the affected services.
+
+An internal LAN runner may automate that sequence later, but it should consume
+an immutable reviewed revision and require an approval gate. Do not configure a
+public GitHub-hosted runner to reach the authentication server directly, and do
+not deploy every push to `main` automatically.
