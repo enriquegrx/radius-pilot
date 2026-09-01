@@ -249,6 +249,27 @@ def test_access_object_endpoints_forward_payloads(monkeypatch) -> None:
     assert mutations[1][1]["name"] == "core-dns"
 
 
+def test_logout_survives_an_expired_csrf_token(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "call_helper", fake_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    response = client.post(
+        "/logout", data={"csrf": "stale-or-wrong-token"}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    # The session is gone: the dashboard now redirects back to login.
+    after = client.get("/", follow_redirects=False)
+    assert after.status_code == 303
+    assert after.headers["location"].endswith("/login")
+
+
 def test_access_object_export_and_import(monkeypatch) -> None:
     imports = []
 

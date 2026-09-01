@@ -282,11 +282,10 @@ def login(
 
 
 @app.post("/logout")
-def logout(request: Request, csrf: str = Form()):
-    try:
-        check_csrf(request, csrf)
-    finally:
-        request.session.clear()
+def logout(request: Request, csrf: str = Form(default="")):
+    # Ending your own session is safe, so an expired or missing CSRF token must
+    # still log out cleanly instead of failing with a server error.
+    request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
 
