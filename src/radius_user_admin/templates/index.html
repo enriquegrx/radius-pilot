@@ -130,7 +130,7 @@
             </div>
             <div class="card mt-3">
               <div class="card-header user-card-header">
-                <div><h3 class="card-title mb-1">Duo enrollment API</h3><div class="text-secondary small">Separate Auth API application used for readiness checks and QR enrollments. Keys are stored root-only and never displayed again.</div></div>
+                <div><h3 class="card-title mb-1">Duo enrollment API</h3><div class="text-secondary small">The Auth API application — listed as "Partner Auth API" in the Duo Admin Panel — used for readiness checks and QR enrollments. Keys are stored root-only and never displayed again. The RADIUS application's keys live in the Authentication Proxy and are managed on the server.</div></div>
                 <div>{% if duo_enrollment_api.configured %}<span class="badge bg-green-lt">Configured · {{ duo_enrollment_api.ikey_hint }}… · {{ duo_enrollment_api.api_host }}</span>{% else %}<span class="badge bg-red-lt">Not configured</span>{% endif %}</div>
               </div>
               <div class="card-body">
