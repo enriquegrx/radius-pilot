@@ -99,11 +99,10 @@ def current_admin(request: Request) -> str | None:
         return request.state.current_admin
     admin = request.session.get("admin")
     last_seen = request.session.get("last_seen", 0)
-    if (
-        not admin
-        or not isinstance(last_seen, (int, float))
-        or time.time() - last_seen > SESSION_TTL
-    ):
+    if not admin:
+        request.state.current_admin = None
+        return None
+    if not isinstance(last_seen, (int, float)) or time.time() - last_seen > SESSION_TTL:
         request.session.clear()
         request.state.current_admin = None
         return None
@@ -128,11 +127,16 @@ def require_admin(request: Request) -> str | RedirectResponse:
     return admin
 
 
-def redirect(message: str, level: str = "success", anchor: str = "") -> RedirectResponse:
-    suffix = f"#{anchor}" if anchor else ""
-    return RedirectResponse(
-        f"/?message={quote(message)}&level={quote(level)}{suffix}", status_code=303
-    )
+def redirect(
+    request: Request, message: str, level: str = "success", anchor: str = ""
+) -> RedirectResponse:
+    """Store user feedback server-side and redirect only to a fixed local path."""
+    request.session["flash"] = {
+        "message": str(message)[:500],
+        "level": level if level in {"success", "danger", "warning"} else "success",
+    }
+    destinations = {"": "/", "users": "/#users", "system": "/#system"}
+    return RedirectResponse(destinations.get(anchor, "/"), status_code=303)
 
 
 def helper_payload(request: Request, payload: dict[str, object]) -> dict[str, object]:
@@ -206,13 +210,13 @@ def send_invitation_email(recipient: str, username: str, url: str, expires_at: s
 
 
 @app.get("/login")
-def login_page(request: Request, error: str = ""):
+def login_page(request: Request):
     if current_admin(request):
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"csrf": csrf_token(request), "error": error},
+        {"csrf": csrf_token(request), "error": request.session.pop("login_error", "")},
     )
 
 
@@ -226,13 +230,13 @@ def login(
     try:
         check_csrf(request, csrf)
     except HelperError as exc:
-        return RedirectResponse(f"/login?error={quote(str(exc))}", status_code=303)
+        request.session["login_error"] = str(exc)[:500]
+        return RedirectResponse("/login", status_code=303)
     ip = source_ip(request)
     current = time.time()
     if LOGIN_LOCKED_UNTIL.get(ip, 0) > current:
-        return RedirectResponse(
-            "/login?error=Too%20many%20attempts.%20Try%20again%20later.", status_code=303
-        )
+        request.session["login_error"] = "Too many attempts. Try again later."
+        return RedirectResponse("/login", status_code=303)
     attempts = LOGIN_ATTEMPTS[ip]
     while attempts and current - attempts[0] > LOGIN_WINDOW:
         attempts.popleft()
@@ -248,7 +252,8 @@ def login(
         if len(attempts) >= LOGIN_LIMIT:
             LOGIN_LOCKED_UNTIL[ip] = current + LOGIN_LOCKOUT
             attempts.clear()
-        return RedirectResponse("/login?error=Invalid%20credentials.", status_code=303)
+        request.session["login_error"] = "Invalid credentials."
+        return RedirectResponse("/login", status_code=303)
     LOGIN_ATTEMPTS.pop(ip, None)
     LOGIN_LOCKED_UNTIL.pop(ip, None)
     request.session.clear()
@@ -268,7 +273,7 @@ def logout(request: Request, csrf: str = Form()):
 
 
 @app.get("/")
-def index(request: Request, message: str = "", level: str = "success"):
+def index(request: Request):
     admin = require_admin(request)
     if isinstance(admin, RedirectResponse):
         return admin
@@ -292,6 +297,7 @@ def index(request: Request, message: str = "", level: str = "success"):
             "last_backup": None,
             "disk_free_mb": None,
         }
+    flash = request.session.pop("flash", {})
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -303,8 +309,8 @@ def index(request: Request, message: str = "", level: str = "success"):
             "auth_events": activity["auth_events"],
             "backups": backups,
             "invitations": invitations,
-            "message": message,
-            "level": level if level in {"success", "danger", "warning"} else "success",
+            "message": str(flash.get("message", "")),
+            "level": str(flash.get("level", "success")),
             "error": error,
             "csrf": csrf_token(request),
             "enabled_count": sum(user["effective_enabled"] for user in users),
@@ -356,7 +362,7 @@ def create_invitation(
             result["email"], result["username"], url, result["expires_at"]
         )
     except HelperError as exc:
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
     return templates.TemplateResponse(
         request,
         "invitation_created.html",
@@ -460,9 +466,11 @@ def mutate(
     try:
         check_csrf(request, token)
         call_helper(operation, helper_payload(request, payload))
-        return redirect("Change applied and authentication services validated.", anchor=anchor)
+        return redirect(
+            request, "Change applied and authentication services validated.", anchor=anchor
+        )
     except HelperError as exc:
-        return redirect(str(exc), "danger", anchor)
+        return redirect(request, str(exc), "danger", anchor)
 
 
 @app.post("/users")
@@ -486,7 +494,7 @@ def create_user(
         account_expiry = utc_form_time(expires_at)
         bypass_expiry = utc_form_time(duo_bypass_until)
     except HelperError as exc:
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
     enrollment_needed = False
     if duo_required or panel_access:
         try:
@@ -496,6 +504,7 @@ def create_user(
             enrollment_needed = readiness.get("result") == "enroll"
             if panel_access and enrollment_needed:
                 return redirect(
+                    request,
                     "Create the VPN user, complete Duo enrollment, then grant panel access.",
                     "warning",
                     "users",
@@ -504,13 +513,14 @@ def create_user(
                 readiness.get("result") != "auth" or not readiness.get("push_capable")
             ):
                 return redirect(
+                    request,
                     f"Duo is not ready for {username}: "
                     f"{readiness.get('status', 'unknown status')}.",
                     "danger",
                     "users",
                 )
         except HelperError as exc:
-            return redirect(str(exc), "danger", "users")
+            return redirect(request, str(exc), "danger", "users")
     payload = {
         "username": username,
         "password": password,
@@ -525,19 +535,20 @@ def create_user(
         call_helper("create", helper_payload(request, payload))
         if enrollment_needed:
             call_helper("duo-enroll", helper_payload(request, {"username": username}))
-            return RedirectResponse(
-                f"/users/{quote(username.strip().lower(), safe='')}/duo-enrollment",
-                status_code=303,
-            )
-        return redirect("User created and authentication services validated.", anchor="users")
+            request.session["enrollment_username"] = username.strip().lower()
+            return RedirectResponse("/duo-enrollment", status_code=303)
+        return redirect(
+            request, "User created and authentication services validated.", anchor="users"
+        )
     except HelperError as exc:
         if enrollment_needed:
             return redirect(
+                request,
                 f"Check the user list. Duo enrollment did not complete: {exc}",
                 "danger",
                 "users",
             )
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
 
 
 @app.post("/users/{username}/rename")
@@ -559,13 +570,14 @@ def rename_user(
             )["duo"]
             if readiness.get("result") != "auth" or not readiness.get("push_capable"):
                 return redirect(
+                    request,
                     f"Duo is not ready for {new_username}: "
                     f"{readiness.get('status', 'unknown status')}.",
                     "danger",
                     "users",
                 )
     except (HelperError, StopIteration) as exc:
-        return redirect(str(exc) or "User not found.", "danger", "users")
+        return redirect(request, str(exc) or "User not found.", "danger", "users")
     return mutate(request, csrf, "rename", {"username": username, "new_username": new_username})
 
 
@@ -614,6 +626,7 @@ def set_duo(
             )["duo"]
             if readiness.get("result") != "auth" or not readiness.get("push_capable"):
                 return redirect(
+                    request,
                     f"Duo is not ready for {username}: "
                     f"{readiness.get('status', 'unknown status')}.",
                     "danger",
@@ -621,7 +634,7 @@ def set_duo(
                 )
         bypass_expiry = utc_form_time(duo_bypass_until)
     except HelperError as exc:
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
     return mutate(
         request,
         csrf,
@@ -645,7 +658,7 @@ def set_expiry(
     try:
         expiry = utc_form_time(expires_at)
     except HelperError as exc:
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
     return mutate(request, csrf, "set-expiry", {"username": username, "expires_at": expiry})
 
 
@@ -661,12 +674,13 @@ def check_duo(username: str, request: Request, csrf: str = Form()):
         )["duo"]
         capability = "Push ready" if duo["push_capable"] else "no Push-capable device"
         return redirect(
+            request,
             f"Duo {duo['status']}; {duo['device_count']} device(s), {capability}.",
             "success" if duo["result"] == "auth" and duo["push_capable"] else "warning",
             "users",
         )
     except HelperError as exc:
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
 
 
 @app.post("/users/{username}/duo-enroll")
@@ -677,25 +691,43 @@ def enroll_duo(username: str, request: Request, csrf: str = Form()):
     try:
         check_csrf(request, csrf)
         call_helper("duo-enroll", helper_payload(request, {"username": username}))
-        return RedirectResponse(
-            f"/users/{quote(username, safe='')}/duo-enrollment", status_code=303
-        )
+        request.session["enrollment_username"] = username
+        return RedirectResponse("/duo-enrollment", status_code=303)
     except HelperError as exc:
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
 
 
-@app.get("/users/{username}/duo-enrollment")
-def duo_enrollment_page(username: str, request: Request):
+@app.post("/users/{username}/duo-enrollment")
+def select_duo_enrollment(username: str, request: Request, csrf: str = Form()):
     admin = require_admin(request)
     if isinstance(admin, RedirectResponse):
         return admin
+    try:
+        check_csrf(request, csrf)
+        call_helper("duo-enrollment", {"username": username})
+        request.session["enrollment_username"] = username
+        return RedirectResponse("/duo-enrollment", status_code=303)
+    except HelperError as exc:
+        return redirect(request, str(exc), "danger", "users")
+
+
+@app.get("/duo-enrollment")
+def duo_enrollment_page(request: Request):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    username = str(request.session.pop("enrollment_username", ""))
+    if not username:
+        return redirect(request, "Choose a user enrollment first.", "warning", "users")
     try:
         enrollment = call_helper("duo-enrollment", {"username": username})["enrollment"]
         expires_at = datetime.fromtimestamp(int(enrollment["expiration"]), UTC).astimezone(
             LOCAL_ZONE
         )
     except (HelperError, KeyError, TypeError, ValueError, OSError) as exc:
-        return redirect(str(exc) or "Duo enrollment is unavailable.", "danger", "users")
+        return redirect(
+            request, str(exc) or "Duo enrollment is unavailable.", "danger", "users"
+        )
     return templates.TemplateResponse(
         request,
         "duo_enrollment.html",
@@ -729,13 +761,14 @@ def set_panel_access(
             )["duo"]
             if readiness.get("result") != "auth" or not readiness.get("push_capable"):
                 return redirect(
+                    request,
                     f"Duo is not ready for {username}: "
                     f"{readiness.get('status', 'unknown status')}.",
                     "danger",
                     "users",
                 )
     except HelperError as exc:
-        return redirect(str(exc), "danger", "users")
+        return redirect(request, str(exc), "danger", "users")
     return mutate(
         request,
         csrf,

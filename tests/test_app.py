@@ -97,3 +97,58 @@ def test_invitation_page_never_exposes_existing_password(monkeypatch) -> None:
     assert "Welcome, new-user" in response.text
     assert "Choose your VPN password" in response.text
     assert "existing password" not in response.text
+
+
+def test_login_failure_uses_server_side_flash(monkeypatch) -> None:
+    def rejecting_helper(operation: str, _payload=None):
+        assert operation == "authenticate-admin"
+        return {"ok": True, "authenticated": False}
+
+    monkeypatch.setattr(app_module, "call_helper", rejecting_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    token = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/login",
+        data={"csrf": token, "username": "admin", "password": "wrong-password"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert response.history[0].headers["location"] == "/login"
+    assert "Invalid credentials." in response.text
+
+
+def test_enrollment_redirect_has_a_fixed_local_destination(monkeypatch) -> None:
+    def enrollment_helper(operation: str, payload=None):
+        if operation == "duo-enrollment":
+            return {
+                "ok": True,
+                "enrollment": {
+                    "username": payload["username"],
+                    "activation_url": "https://example.duosecurity.com/activate",
+                    "activation_barcode": "safe-barcode",
+                    "expiration": 2_000_000_000,
+                },
+            }
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", enrollment_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    token = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": token, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/users/vpn-test-user/duo-enrollment",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/duo-enrollment"
+    enrollment = client.get("/duo-enrollment")
+    assert enrollment.status_code == 200
+    assert "vpn-test-user" in enrollment.text
