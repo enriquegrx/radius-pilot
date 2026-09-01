@@ -1,0 +1,7 @@
+flowchart LR
+    AC[AnyConnect client] -->|IKEv2 + EAP| ISR[Cisco ISR]
+    ISR -->|RADIUS 1812/udp| DUO[Duo Authentication Proxy]
+    DUO -->|primary password to 127.0.0.1:18120| FR[FreeRADIUS]
+    DUO -->|second factor| CLOUD[(Duo cloud)]
+    RP[RadiusPilot console] -->|root helper| AUTH[(generated authorize file)]
+    AUTH --> FR

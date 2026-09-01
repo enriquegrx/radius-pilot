@@ -84,16 +84,7 @@ allowlist.
 
 ## Architecture 🧱
 
-```mermaid
-flowchart LR
-    AC[AnyConnect client] -->|IKEv2 + EAP| ISR[Cisco ISR]
-    ISR -->|RADIUS 1812/udp| DUO[Duo Authentication Proxy]
-    DUO -->|primary password| FR[FreeRADIUS]
-    DUO -->|second factor| CLOUD[(Duo cloud)]
-    ADMIN[Panel administrator] -->|HTTPS via Nginx| RP[RadiusPilot console]
-    RP -->|root helper| AUTH[(generated authorize file)]
-    AUTH --> FR
-```
+![RadiusPilot architecture: AnyConnect clients reach the Cisco ISR over IKEv2, the ISR authenticates through the Duo Authentication Proxy against FreeRADIUS and the Duo cloud, and the RadiusPilot console maintains the generated authorize file through a root helper](docs/img/architecture.svg)
 
 The FastAPI process runs as the unprivileged `radiusui` account. It cannot read
 the password store or the generated FreeRADIUS file. Mutations are sent as JSON

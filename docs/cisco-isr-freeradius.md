@@ -7,15 +7,7 @@ the router itself. Replace the example addresses (`192.0.2.x`), names, secrets
 and the trustpoint with your own. The RADIUS server host is called `radius01`
 here, matching the rest of the documentation.
 
-```mermaid
-flowchart LR
-    AC[AnyConnect client] -->|IKEv2 + EAP| ISR[Cisco ISR]
-    ISR -->|RADIUS 1812/udp| DUO[Duo Authentication Proxy]
-    DUO -->|primary password<br>127.0.0.1:18120| FR[FreeRADIUS]
-    DUO -->|second factor| CLOUD[(Duo cloud)]
-    RP[RadiusPilot console] -->|root helper| AUTH[(generated authorize file)]
-    AUTH --> FR
-```
+![Authentication flow: the AnyConnect client reaches the Cisco ISR over IKEv2, the ISR sends RADIUS to the Duo Authentication Proxy, the proxy validates the primary password against FreeRADIUS on 127.0.0.1:18120 and the second factor against the Duo cloud, and RadiusPilot maintains the generated authorize file](img/isr-freeradius-flow.svg)
 
 The ISR never talks to FreeRADIUS directly: it sends every request to the Duo
 Authentication Proxy, which first validates the password against FreeRADIUS and
