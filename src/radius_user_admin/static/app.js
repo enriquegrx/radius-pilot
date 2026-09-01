@@ -21,10 +21,58 @@
     button.addEventListener("click", () => document.getElementById(button.dataset.dialogOpen)?.showModal());
   });
 
+  const sections = [...document.querySelectorAll(".console-section")];
+  const tabLinks = [...document.querySelectorAll(".section-nav a")];
+  if (sections.length && tabLinks.length) {
+    const ids = sections.map((section) => section.id);
+    const activate = (id) => {
+      if (!ids.includes(id)) return;
+      sections.forEach((section) => { section.hidden = section.id !== id; });
+      tabLinks.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === `#${id}`));
+      try { localStorage.setItem("console-tab", id); } catch (_error) { /* storage unavailable */ }
+    };
+    let initial = location.hash.slice(1);
+    if (!ids.includes(initial)) {
+      try { initial = localStorage.getItem("console-tab") || ""; } catch (_error) { initial = ""; }
+    }
+    activate(ids.includes(initial) ? initial : ids[0]);
+    window.addEventListener("hashchange", () => activate(location.hash.slice(1)));
+  }
+
   const search = document.getElementById("user-search");
   const filter = document.getElementById("user-filter");
   const rows = [...document.querySelectorAll("[data-user-row]")];
   const empty = document.getElementById("no-filter-results");
+  const counter = document.getElementById("user-count");
+  const detailFor = (row) => {
+    const next = row.nextElementSibling;
+    return next?.classList.contains("user-detail-row") ? next : null;
+  };
+  const collapseRow = (row) => {
+    const detail = detailFor(row);
+    if (detail) detail.hidden = true;
+    row.classList.remove("expanded");
+    row.setAttribute("aria-expanded", "false");
+  };
+  const toggleRow = (row) => {
+    const detail = detailFor(row);
+    if (!detail) return;
+    const expand = detail.hidden;
+    detail.hidden = !expand;
+    row.classList.toggle("expanded", expand);
+    row.setAttribute("aria-expanded", String(expand));
+  };
+  rows.forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button, a, input, select, label")) return;
+      toggleRow(row);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      toggleRow(row);
+    });
+  });
   const applyFilters = () => {
     const query = search?.value.trim().toLowerCase() || "";
     const selected = filter?.value || "all";
@@ -33,12 +81,15 @@
       const matchesQuery = row.dataset.username.includes(query);
       const matchesFilter = selected === "all" || row.dataset.filterStatus === selected || row.dataset.filterDuo === selected;
       row.hidden = !(matchesQuery && matchesFilter);
+      if (row.hidden) collapseRow(row);
       if (!row.hidden) visible += 1;
     });
     if (empty) empty.hidden = visible !== 0;
+    if (counter) counter.textContent = rows.length ? `${visible} of ${rows.length} shown` : "";
   };
   search?.addEventListener("input", applyFilters);
   filter?.addEventListener("change", applyFilters);
+  applyFilters();
 
   document.querySelectorAll(".js-duo-mode").forEach((select) => {
     const form = select.closest("form");
@@ -158,6 +209,15 @@
       if (!target?.value) return;
       await navigator.clipboard.writeText(target.value);
       button.textContent = "Copied";
+    });
+  });
+  document.querySelectorAll("[data-copy-text]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!button.dataset.copyText) return;
+      await navigator.clipboard.writeText(button.dataset.copyText);
+      const original = button.textContent;
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = original; }, 1500);
     });
   });
 

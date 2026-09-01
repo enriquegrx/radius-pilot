@@ -40,10 +40,44 @@ def fake_helper(operation: str, _payload=None):
                 "credential_scheme": "nt-hash",
                 "access_policy": {"mode": "full", "rules": []},
                 "access_summary": "Full access",
+                "access_avpairs": [],
                 "custom_access_eligible": True,
                 "created_at": "2026-09-01T06:00:00+00:00",
                 "updated_at": "2026-09-01T06:00:00+00:00",
-            }
+            },
+            {
+                "username": "acl-user",
+                "enabled": True,
+                "duo_required": True,
+                "effective_enabled": True,
+                "effective_duo_required": True,
+                "expires_at": "2026-09-03T06:00:00+00:00",
+                "duo_bypass_until": None,
+                "duo_bypass_reason": "",
+                "last_auth": None,
+                "panel_access": False,
+                "duo_enrollment_active": False,
+                "credential_scheme": "legacy-cleartext",
+                "access_policy": {
+                    "mode": "custom",
+                    "rules": [
+                        {
+                            "destination": "192.168.50.112/32",
+                            "protocol": "tcp",
+                            "ports": [[443, 443]],
+                        }
+                    ],
+                },
+                "access_summary": "Custom · 1 destination · 1 service",
+                "access_avpairs": [
+                    "ipsec:route-set=prefix 192.168.50.112/32",
+                    "ip:inacl#1=permit tcp any host 192.168.50.112 eq 443",
+                    "ip:inacl#2=deny ip any any",
+                ],
+                "custom_access_eligible": True,
+                "created_at": "2026-09-01T06:00:00+00:00",
+                "updated_at": "2026-09-01T06:00:00+00:00",
+            },
         ],
         "health": {
             "active": True,
@@ -78,6 +112,25 @@ def test_dashboard_renders_user_without_password(monkeypatch) -> None:
     assert "long-enough-password" not in response.text
     assert "js-manage" in response.text
     assert "dropdown-menu" not in response.text
+
+
+def test_dashboard_shows_expandable_details_and_expiry_warning(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "call_helper", fake_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    token = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/login",
+        data={"csrf": token, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "user-detail-row" in response.text
+    assert "Expires soon" in response.text
+    assert "Expiring soon" in response.text
+    assert "Legacy password" in response.text
+    assert "deny ip any any" in response.text
+    assert 'data-copy-text="acl-user"' in response.text
 
 
 def test_access_policy_endpoint_forwards_valid_rules(monkeypatch) -> None:

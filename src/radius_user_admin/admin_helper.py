@@ -505,6 +505,10 @@ class Store:
                 item["access_policy"],
                 destination_allowlist=self.policy_destinations,
             )
+            public["access_avpairs"] = cisco_avpairs(
+                item["access_policy"],
+                destination_allowlist=self.policy_destinations,
+            )
             public["custom_access_eligible"] = (
                 item["username"] not in self.local_fallback_users
             )

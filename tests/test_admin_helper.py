@@ -647,6 +647,24 @@ def test_access_policy_rejects_radius_reply_larger_than_udp_budget() -> None:
         cisco_avpairs(policy)
 
 
+def test_public_list_includes_compiled_avpairs(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate(
+        "create",
+        {
+            "username": "acl-user",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "access_policy": custom_policy(),
+        },
+    )
+    public = {user["username"]: user for user in store.public_list()["users"]}
+    avpairs = public["acl-user"]["access_avpairs"]
+    assert avpairs[0].startswith("ipsec:route-set=prefix ")
+    assert avpairs[-1].endswith("deny ip any any")
+    assert public["vpn-test-user"]["access_avpairs"] == []
+
+
 def test_custom_access_requires_feature_gate_and_duo_forwarding(store: Store) -> None:
     with pytest.raises(AdminError, match="disabled"):
         store.mutate(

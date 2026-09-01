@@ -10,7 +10,7 @@ import smtplib
 import ssl
 import time
 from collections import defaultdict, deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import quote
@@ -319,6 +319,19 @@ def index(request: Request):
             "disk_free_mb": None,
         }
         access_policy = {"custom_enabled": False, "allowed_destinations": []}
+    expiry_warning = datetime.now(UTC) + timedelta(days=7)
+    for user in users:
+        user["expires_soon"] = False
+        raw_expiry = user.get("expires_at")
+        if not raw_expiry or not user.get("effective_enabled"):
+            continue
+        try:
+            expires = datetime.fromisoformat(raw_expiry)
+        except ValueError:
+            continue
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        user["expires_soon"] = expires <= expiry_warning
     flash = request.session.pop("flash", {})
     return templates.TemplateResponse(
         request,
@@ -344,6 +357,7 @@ def index(request: Request):
                 user["effective_enabled"] and not user["effective_duo_required"] for user in users
             ),
             "panel_admin_count": sum(user["panel_access"] for user in users),
+            "expiring_count": sum(user["expires_soon"] for user in users),
             "custom_access_enabled": bool(access_policy.get("custom_enabled")),
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
         },

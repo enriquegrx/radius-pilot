@@ -25,6 +25,7 @@ elif sys.argv[1] == "list":
                         "credential_scheme": "nt-hash",
                         "access_policy": {"mode": "full", "rules": []},
                         "access_summary": "Full access",
+                        "access_avpairs": [],
                         "custom_access_eligible": True,
                         "created_at": "2026-01-01T00:00:00+00:00",
                         "updated_at": "2026-01-01T00:00:00+00:00",

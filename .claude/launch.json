@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "radiuspilot-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "RADIUS_ADMIN_HELPER=tests/fake_helper.py RADIUS_ADMIN_SESSION_SECRET=development-only RADIUS_ADMIN_SECURE_COOKIE=0 RADIUS_ADMIN_ALLOWED_HOSTS=localhost,127.0.0.1 exec .venv/bin/uvicorn radius_user_admin.app:app --port 8400"
+      ],
+      "port": 8400
+    }
+  ]
+}
