@@ -84,6 +84,17 @@ allowlist.
 
 ## Architecture 🧱
 
+```mermaid
+flowchart LR
+    AC[AnyConnect client] -->|IKEv2 + EAP| ISR[Cisco ISR]
+    ISR -->|RADIUS 1812/udp| DUO[Duo Authentication Proxy]
+    DUO -->|primary password| FR[FreeRADIUS]
+    DUO -->|second factor| CLOUD[(Duo cloud)]
+    ADMIN[Panel administrator] -->|HTTPS via Nginx| RP[RadiusPilot console]
+    RP -->|root helper| AUTH[(generated authorize file)]
+    AUTH --> FR
+```
+
 The FastAPI process runs as the unprivileged `radiusui` account. It cannot read
 the password store or the generated FreeRADIUS file. Mutations are sent as JSON
 over stdin to a narrowly scoped root helper through `sudo`; passwords therefore
@@ -120,6 +131,18 @@ are returned to the web process.
 
 The interface uses the open-source [Tabler](https://tabler.io/) design system,
 vendored locally under its MIT license.
+
+## Configuring the Cisco ISR and FreeRADIUS 📡
+
+[docs/cisco-isr-freeradius.md](docs/cisco-isr-freeradius.md) contains the
+minimal working configuration for everything around RadiusPilot: the ISR's AAA
+and RADIUS plumbing, a complete AnyConnect-over-IKEv2 (FlexVPN) profile,
+optional Duo-protected SSH logins to the router itself, the Duo Authentication
+Proxy file, and the FreeRADIUS pieces. It also explains the three settings
+people most often get wrong: the long RADIUS timeout the Push needs,
+`aaa authorization user anyconnect-eap cached` (required for custom access
+policies to be enforced), and seeding the AnyConnect XML profile for the very
+first connection.
 
 ## Development 🧰
 
