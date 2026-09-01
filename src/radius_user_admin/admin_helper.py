@@ -70,8 +70,24 @@ DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
 DUO_SECTION = "radius_server_auto"
 BACKUP_NAME = re.compile(r"^(?:\d{8}T\d{12}Z|deploy-\d{8}T\d{6}Z)$")
 ADMIN_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{2,63}$")
+
+
+def runtime_setting(name: str, default: str) -> str:
+    if value := os.environ.get(name):
+        return value
+    environment_path = Path("/etc/radius-user-admin/environment")
+    try:
+        for line in environment_path.read_text().splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == name and value.strip():
+                return value.strip()
+    except OSError:
+        pass
+    return default
+
+
 DEFAULT_AUTHORIZE_PATH = Path(
-    os.environ.get(
+    runtime_setting(
         "RADIUS_ADMIN_AUTHORIZE_PATH",
         "/etc/freeradius/3.0/mods-config/files/vpn-users/authorize",
     )

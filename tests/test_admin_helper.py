@@ -248,6 +248,16 @@ def test_username_is_normalized_to_lowercase() -> None:
     assert admin_helper.clean_username("Hola@your-domain.com") == "hola@your-domain.com"
 
 
+def test_runtime_setting_prefers_explicit_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RADIUSPILOT_TEST_SETTING", "/safe/explicit/path")
+    assert (
+        admin_helper.runtime_setting("RADIUSPILOT_TEST_SETTING", "/fallback")
+        == "/safe/explicit/path"
+    )
+
+
 def test_duo_enrollment_is_kept_root_only(store: Store) -> None:
     store.mutate(
         "create",
