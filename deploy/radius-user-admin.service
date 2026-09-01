@@ -1,0 +1,30 @@
+[Unit]
+Description=Example Organization FreeRADIUS user administration console
+After=network.target freeradius.service
+
+[Service]
+Type=simple
+User=radiusui
+Group=radiusui
+EnvironmentFile=/etc/radius-user-admin/environment
+ExecStart=/usr/bin/python3 -m uvicorn radius_user_admin.app:app --app-dir /opt/radius-user-admin/src --host 127.0.0.1 --port 8080 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/etc/freeradius/3.0/mods-config/files/vpn-users /var/lib/radius-user-admin /var/backups/radius-user-admin /run/lock
+
+[Install]
+WantedBy=multi-user.target

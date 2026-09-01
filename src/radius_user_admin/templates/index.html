@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Radius User Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  </head>
+  <body>
+    <div class="page">
+      <header class="navbar navbar-expand-md d-print-none admin-header">
+        <div class="container-xl">
+          <div class="d-flex align-items-center gap-3">
+            <div class="brand-mark" aria-hidden="true">R</div>
+            <div>
+              <div class="navbar-brand m-0 p-0">Radius User Admin</div>
+              <div class="text-secondary small">Example Organization · VPN identity control</div>
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            {% if health.active and health.config_valid %}
+              <span class="status status-green"><span class="status-dot status-dot-animated"></span>FreeRADIUS healthy</span>
+            {% else %}
+              <span class="status status-red"><span class="status-dot"></span>Service needs attention</span>
+            {% endif %}
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#create-modal">Add user</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="page-wrapper">
+        <div class="page-body">
+          <div class="container-xl">
+            {% if message %}<div class="alert alert-{{ level }} alert-dismissible" role="alert">{{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>{% endif %}
+            {% if error %}<div class="alert alert-danger" role="alert"><strong>Cannot load users.</strong> {{ error }}</div>{% endif %}
+
+            <div class="row row-cards mb-4">
+              <div class="col-sm-6 col-lg-4">
+                <div class="card metric-card"><div class="card-body"><div class="subheader">Enabled users</div><div class="h1 mb-0">{{ enabled_count }}</div><div class="text-secondary mt-1">Can reach primary auth and Duo</div></div></div>
+              </div>
+              <div class="col-sm-6 col-lg-4">
+                <div class="card metric-card"><div class="card-body"><div class="subheader">Blocked users</div><div class="h1 mb-0">{{ blocked_count }}</div><div class="text-secondary mt-1">Retained, but denied before Duo</div></div></div>
+              </div>
+              <div class="col-sm-12 col-lg-4">
+                <div class="card metric-card"><div class="card-body"><div class="subheader">Configuration</div><div class="h2 mb-0">{% if health.config_valid %}Validated{% else %}Invalid{% endif %}</div><div class="text-secondary mt-1">Every change is checked and reversible</div></div></div>
+              </div>
+            </div>
+
+            <div class="card user-card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title mb-1">VPN users</h2>
+                  <div class="text-secondary">The username must exactly match the Duo account.</div>
+                </div>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-vcenter card-table">
+                  <thead><tr><th>User</th><th>Status</th><th>Last changed</th><th class="w-1"><span class="visually-hidden">Actions</span></th></tr></thead>
+                  <tbody>
+                    {% for user in users %}
+                    <tr>
+                      <td><div class="d-flex align-items-center gap-3"><span class="avatar avatar-sm user-avatar">{{ user.username[:2] | upper }}</span><div><div class="fw-semibold">{{ user.username }}</div><div class="text-secondary small">FreeRADIUS + Duo</div></div></div></td>
+                      <td>{% if user.enabled %}<span class="badge bg-green-lt">Enabled</span>{% else %}<span class="badge bg-red-lt">Blocked</span>{% endif %}</td>
+                      <td class="text-secondary">{{ user.updated_at[:10] }} {{ user.updated_at[11:16] }} UTC</td>
+                      <td>
+                        <div class="dropdown">
+                          <button class="btn btn-ghost-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">Manage</button>
+                          <div class="dropdown-menu dropdown-menu-end">
+                            <button class="dropdown-item js-action" data-action="rename" data-user="{{ user.username }}">Rename</button>
+                            <button class="dropdown-item js-action" data-action="password" data-user="{{ user.username }}">Reset password</button>
+                            <div class="dropdown-divider"></div>
+                            <button class="dropdown-item js-action" data-action="status" data-user="{{ user.username }}" data-enabled="{{ 'false' if user.enabled else 'true' }}">{{ 'Block' if user.enabled else 'Unblock' }}</button>
+                            <button class="dropdown-item text-danger js-action" data-action="delete" data-user="{{ user.username }}">Delete</button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4"><div class="empty py-5"><p class="empty-title">No users available</p><p class="empty-subtitle text-secondary">Check the helper status or add the first account during bootstrap.</p></div></td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div class="modal modal-blur fade" id="create-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered"><form class="modal-content" method="post" action="/users">
+        <div class="modal-header"><h2 class="modal-title">Add VPN user</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+        <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="mb-3"><label class="form-label" for="create-username">Username</label><input class="form-control" id="create-username" name="username" required minlength="1" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"><small class="form-hint">Use the exact Duo username.</small></div><div><label class="form-label" for="create-password">Initial password</label><input class="form-control" id="create-password" name="password" type="password" required minlength="14" maxlength="128" autocomplete="new-password"><small class="form-hint">14–128 characters. It will never be shown again.</small></div></div>
+        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create user</button></div>
+      </form></div>
+    </div>
+
+    <div class="modal modal-blur fade" id="action-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered"><form class="modal-content" id="action-form" method="post">
+        <div class="modal-header"><h2 class="modal-title" id="action-title">Manage user</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+        <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div id="action-description" class="text-secondary mb-3"></div><div id="action-field"></div></div>
+        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="action-submit">Apply change</button></div>
+      </form></div>
+    </div>
+
+    <script src="{{ url_for('static', path='vendor/tabler/tabler.min.js') }}"></script>
+    <script src="{{ url_for('static', path='app.js') }}"></script>
+  </body>
+</html>
+

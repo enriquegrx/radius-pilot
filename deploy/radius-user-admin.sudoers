@@ -1,0 +1,2 @@
+radiusui ALL=(root) NOPASSWD: /usr/local/sbin/radius-user-admin-helper *
+
