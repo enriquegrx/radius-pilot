@@ -25,9 +25,9 @@ from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 
-USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
 AUTHORIZE_LINE = re.compile(
-    r'^([a-z0-9][a-z0-9._-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
+    r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
 )
 OPERATIONS = {
     "bootstrap",
@@ -57,7 +57,7 @@ DUO_BEGIN = "# BEGIN RADIUS USER ADMIN EXEMPTIONS"
 DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
 DUO_SECTION = "radius_server_auto"
 BACKUP_NAME = re.compile(r"^(?:\d{8}T\d{12}Z|deploy-\d{8}T\d{6}Z)$")
-ADMIN_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
+ADMIN_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{2,63}$")
 
 
 class AdminError(RuntimeError):
@@ -78,8 +78,14 @@ def encode_radius(value: str) -> str:
 
 def clean_username(value: object) -> str:
     username = str(value or "").strip().lower()
-    if not USERNAME.fullmatch(username):
-        raise AdminError("Use 1–64 lowercase letters, numbers, dots, dashes, or underscores.")
+    if (
+        not USERNAME.fullmatch(username)
+        or username.count("@") > 1
+        or username.endswith("@")
+    ):
+        raise AdminError(
+            "Use 1–64 lowercase letters, numbers, dots, dashes, underscores, or one @ sign."
+        )
     return username
 
 
@@ -120,7 +126,11 @@ def clean_reason(value: object) -> str:
 
 def clean_admin_username(value: object) -> str:
     username = str(value or "").strip().lower()
-    if not ADMIN_USERNAME.fullmatch(username):
+    if (
+        not ADMIN_USERNAME.fullmatch(username)
+        or username.count("@") > 1
+        or username.endswith("@")
+    ):
         raise AdminError("Invalid administrator username.")
     return username
 

@@ -110,7 +110,7 @@
       if (action === "rename") {
         title.textContent = `Rename ${user}`;
         description.textContent = "Duo readiness will be checked before the renamed account is used.";
-        field.innerHTML = `<label class="form-label" for="action-input">New username</label><input class="form-control" id="action-input" name="new_username" value="${user}" required maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off">`;
+        field.innerHTML = `<label class="form-label" for="action-input">New username</label><input class="form-control" id="action-input" name="new_username" value="${user}" required maxlength="64" pattern="[a-z0-9][a-z0-9._@-]{0,63}" autocomplete="off">`;
         form.action = `/users/${encode(user)}/rename`;
         submit.textContent = "Rename user";
       } else if (action === "password") {

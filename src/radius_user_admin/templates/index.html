@@ -94,7 +94,7 @@
     <dialog class="admin-dialog" id="create-modal" aria-labelledby="create-title"><form class="modal-content" method="post" action="/users">
       <div class="modal-header"><h2 class="modal-title" id="create-title">Add VPN user</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
       <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}">
-        <div class="mb-3"><label class="form-label" for="create-username">Username</label><input class="form-control" id="create-username" name="username" required maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"></div>
+        <div class="mb-3"><label class="form-label" for="create-username">Username</label><input class="form-control" id="create-username" name="username" required maxlength="64" pattern="[a-z0-9][a-z0-9._@-]{0,63}" autocomplete="off"><small class="form-hint">Email-style usernames such as user@your-domain.com are supported.</small></div>
         <div class="mb-3"><label class="form-label" for="create-password">Initial password</label><div class="input-group"><input class="form-control" id="create-password" name="password" type="password" data-secret required minlength="14" maxlength="128" autocomplete="new-password"><button class="btn btn-outline-secondary js-generate-password" type="button" data-target="create-password">Generate</button><button class="btn btn-outline-secondary js-copy-password" type="button" data-target="create-password">Copy</button></div><small class="form-hint">Shown only while this dialog is open.</small></div>
         <div class="mb-3"><label class="form-label" for="create-duo">Authentication</label><select class="form-select js-duo-mode" id="create-duo" name="duo_required"><option value="true" selected>Password + Duo Push</option><option value="false">Password only</option></select></div>
         <div class="duo-bypass-fields" hidden><div class="mb-3"><label class="form-label" for="create-bypass-reason">Reason for exception</label><input class="form-control" id="create-bypass-reason" name="duo_bypass_reason" maxlength="160"></div><div class="mb-3"><label class="form-label" for="create-bypass-until">Return to Duo automatically</label><input class="form-control" id="create-bypass-until" name="duo_bypass_until" type="datetime-local"><small class="form-hint">Leave empty only for a deliberate permanent exception.</small></div></div>
@@ -117,6 +117,6 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-warning">Restore backup</button></div>
     </form></dialog>
 
-    <script src="{{ url_for('static', path='app.js') }}?v=20260901-6"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260901-7"></script>
   </body>
 </html>

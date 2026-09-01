@@ -42,6 +42,8 @@ delete users.
 - Common tasks must take no more than three clicks from the user list.
 - Never display an existing password. Password reset accepts a new value only.
 - The FreeRADIUS username must exactly match the corresponding Duo username.
+- Email-style usernames are supported. Keep the single-`@`, 64-character and
+  safe-character validation aligned in the helper, HTML forms, and tests.
 - Use a separate Auth API integration for enrollment. Never replace or reuse the
   Authentication Proxy configuration as enrollment configuration.
 - Existing and newly created users default to requiring Duo. Password-only mode

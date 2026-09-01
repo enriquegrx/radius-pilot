@@ -300,7 +300,9 @@ def create_user(
     enrollment_needed = False
     if duo_required or panel_access:
         try:
-            readiness = call_helper("duo-check", {"username": username})["duo"]
+            readiness = call_helper(
+                "duo-check", helper_payload(request, {"username": username})
+            )["duo"]
             enrollment_needed = readiness.get("result") == "enroll"
             if panel_access and enrollment_needed:
                 return redirect(
@@ -362,7 +364,9 @@ def rename_user(
         check_csrf(request, csrf)
         user = next(item for item in call_helper("list")["users"] if item["username"] == username)
         if user["effective_duo_required"]:
-            readiness = call_helper("duo-check", {"username": new_username})["duo"]
+            readiness = call_helper(
+                "duo-check", helper_payload(request, {"username": new_username})
+            )["duo"]
             if readiness.get("result") != "auth" or not readiness.get("push_capable"):
                 return redirect(
                     f"Duo is not ready for {new_username}: "
@@ -410,7 +414,9 @@ def set_duo(
             return admin
         check_csrf(request, csrf)
         if duo_required:
-            readiness = call_helper("duo-check", {"username": username})["duo"]
+            readiness = call_helper(
+                "duo-check", helper_payload(request, {"username": username})
+            )["duo"]
             if readiness.get("result") != "auth" or not readiness.get("push_capable"):
                 return redirect(
                     f"Duo is not ready for {username}: "
@@ -455,7 +461,9 @@ def check_duo(username: str, request: Request, csrf: str = Form()):
         return admin
     try:
         check_csrf(request, csrf)
-        duo = call_helper("duo-check", {"username": username})["duo"]
+        duo = call_helper(
+            "duo-check", helper_payload(request, {"username": username})
+        )["duo"]
         capability = "Push ready" if duo["push_capable"] else "no Push-capable device"
         return redirect(
             f"Duo {duo['status']}; {duo['device_count']} device(s), {capability}.",
@@ -521,7 +529,9 @@ def set_panel_access(
     try:
         check_csrf(request, csrf)
         if enabled:
-            readiness = call_helper("duo-check", {"username": username})["duo"]
+            readiness = call_helper(
+                "duo-check", helper_payload(request, {"username": username})
+            )["duo"]
             if readiness.get("result") != "auth" or not readiness.get("push_capable"):
                 return redirect(
                     f"Duo is not ready for {username}: "

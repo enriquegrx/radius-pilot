@@ -38,7 +38,8 @@ is no WAN NAT, Cloudflare Tunnel, or public admin path.
 - Keeps a root-owned state file and generates the existing `authorize` file.
 
 The username entered here must match the username enrolled in Duo when Duo Push
-is required. Password-only mode uses Duo Authentication Proxy's
+is required. Email-style usernames such as `user@your-domain.com` are supported.
+Password-only mode uses Duo Authentication Proxy's
 `exempt_username_N` setting for this VPN integration; FreeRADIUS still checks the
 primary password. It does not place the user in global Duo bypass. Blocking a
 user removes it from the generated FreeRADIUS file, so neither the primary

@@ -172,7 +172,9 @@ def test_unmanaged_duo_exemption_is_rejected(store: Store) -> None:
         )
 
 
-@pytest.mark.parametrize("username", ["space user", "../root", "", "x" * 65])
+@pytest.mark.parametrize(
+    "username", ["space user", "../root", "", "x" * 65, "bad@@your-domain.com", "bad@"]
+)
 def test_username_policy_rejects_unsafe_values(username: str) -> None:
     with pytest.raises(AdminError):
         admin_helper.clean_username(username)
@@ -180,6 +182,7 @@ def test_username_policy_rejects_unsafe_values(username: str) -> None:
 
 def test_username_is_normalized_to_lowercase() -> None:
     assert admin_helper.clean_username("QUIQUE") == "quique"
+    assert admin_helper.clean_username("Hola@your-domain.com") == "hola@your-domain.com"
 
 
 def test_duo_enrollment_is_kept_root_only(store: Store) -> None:
