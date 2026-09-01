@@ -1,15 +1,22 @@
-# Radius User Admin
+# Radius User Admin 🛡️
 
-🛡️ A deliberately small web console for managing the VPN users authenticated by
-FreeRADIUS at Example Organization. It is built for the handful of jobs that matter day to day:
-see who has access, add an account, choose whether it requires Duo Push, rename
-it, reset its password, block it, or remove it.
+A small web console for the VPN accounts authenticated by FreeRADIUS at Example Organization.
+It covers the jobs we actually need day to day: see who has access, add an
+account, enrol it in Duo, reset a password, block it, or remove it.
 
 The application runs on `radius01` behind Nginx. FastAPI listens only on
 loopback; Nginx publishes HTTPS to the approved internal and VPN networks. There
 is no WAN NAT, Cloudflare Tunnel, or public admin path.
 
-## What it does
+## Why it exists 💡
+
+Editing the FreeRADIUS `authorize` file by hand is quick until account state,
+Duo exceptions and emergency access all need to stay in sync. This console
+keeps that workflow simple without turning it into a general-purpose identity
+platform. Routine changes stay within three clicks and every write is validated
+before it reaches the live authentication service.
+
+## What it does 🧭
 
 - Lists enabled and blocked users without exposing passwords.
 - Creates, renames, blocks, unblocks, and deletes accounts.
@@ -45,13 +52,13 @@ primary password. It does not place the user in global Duo bypass. Blocking a
 user removes it from the generated FreeRADIUS file, so neither the primary
 password nor Duo Push is reached.
 
-## Open the console
+## Open the console 🌐
 
 From a device on an approved LAN or connected through the Example Organization VPN, open
 <https://radius.your-domain.com>. Nginx and nftables both enforce the source-network
 allowlist.
 
-## Architecture
+## Architecture 🧱
 
 The FastAPI process runs as the unprivileged `radiusui` account. It cannot read
 the password store or the generated FreeRADIUS file. Mutations are sent as JSON
@@ -82,7 +89,7 @@ are returned to the web process.
 The interface uses the open-source [Tabler](https://tabler.io/) design system,
 vendored locally under its MIT license.
 
-## Development
+## Development 🧰
 
 ```bash
 python3 -m venv .venv
@@ -99,7 +106,7 @@ RADIUS_ADMIN_SESSION_SECRET=development-only \
 .venv/bin/uvicorn radius_user_admin.app:app --reload
 ```
 
-## Production notes
+## Production notes 🚀
 
 Deployment is intentionally Debian-native: packaged Python modules, a hardened
 systemd unit, a dedicated service user, Nginx with a Let's Encrypt certificate,
