@@ -446,6 +446,8 @@ class Store:
                 )
             ):
                 raise AdminError("Version 3 user state is missing required security fields.")
+            if not isinstance(user["access_policy"], dict):
+                raise AdminError("The stored access policy is corrupt.")
             try:
                 user["access_policy"] = clean_access_policy(
                     user["access_policy"],
@@ -1490,6 +1492,8 @@ class Store:
                 )
             ):
                 raise AdminError("Version 3 backup is missing required security fields.")
+            if not isinstance(user["access_policy"], dict):
+                raise AdminError("The backup contains a corrupt access policy.")
             user["access_policy"] = self._clean_policy_for_assignment(
                 user["access_policy"], username=user["username"]
             )

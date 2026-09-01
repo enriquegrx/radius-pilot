@@ -10,6 +10,7 @@ import pytest
 from radius_user_admin import admin_helper
 from radius_user_admin.access_policy import (
     AccessPolicyError,
+    allowed_destinations,
     cisco_avpairs,
     clean_access_policy,
 )
@@ -215,6 +216,15 @@ def test_version_three_state_requires_explicit_access_policy(store: Store) -> No
     store.state_path.write_text(json.dumps(data))
 
     with pytest.raises(AdminError, match="missing required security fields"):
+        store.load()
+
+
+def test_version_three_state_rejects_null_access_policy(store: Store) -> None:
+    data = json.loads(store.state_path.read_text())
+    data["users"][0]["access_policy"] = None
+    store.state_path.write_text(json.dumps(data))
+
+    with pytest.raises(AdminError, match="corrupt"):
         store.load()
 
 
@@ -559,11 +569,64 @@ def test_access_policy_canonicalizes_hosts_ports_and_duplicates() -> None:
             "mode": "custom",
             "rules": [{"destination": "192.168.50.10", "protocol": "tcp", "ports": ""}],
         },
+        {
+            "mode": "custom",
+            "rules": [{"destination": "2001:db8::/64", "protocol": "ip", "ports": ""}],
+        },
+        {
+            "mode": "restricted",
+            "rules": [{"destination": "192.168.50.10", "protocol": "tcp", "ports": "443"}],
+        },
     ],
 )
 def test_access_policy_rejects_unsafe_rules(policy: dict[str, object]) -> None:
     with pytest.raises(AccessPolicyError):
         clean_access_policy(policy)
+
+
+def test_access_policy_rejects_special_addresses_even_when_allowlisted() -> None:
+    allowlist = allowed_destinations("224.0.0.0/4,169.254.0.0/16,127.0.0.0/8")
+    for destination in ("224.0.0.5", "169.254.10.10", "127.0.0.1"):
+        with pytest.raises(AccessPolicyError, match="denied"):
+            clean_access_policy(
+                {
+                    "mode": "custom",
+                    "rules": [
+                        {"destination": destination, "protocol": "ip", "ports": ""}
+                    ],
+                },
+                destination_allowlist=allowlist,
+            )
+
+
+def test_access_policy_rejects_more_than_max_rules() -> None:
+    with pytest.raises(AccessPolicyError, match="at most 24 rules"):
+        clean_access_policy(
+            {
+                "mode": "custom",
+                "rules": [
+                    {"destination": f"10.0.0.{host}/32", "protocol": "ip", "ports": ""}
+                    for host in range(1, 26)
+                ],
+            }
+        )
+
+
+def test_access_policy_rejects_more_than_max_permit_entries() -> None:
+    with pytest.raises(AccessPolicyError, match="at most 63 permit entries"):
+        clean_access_policy(
+            {
+                "mode": "custom",
+                "rules": [
+                    {
+                        "destination": f"10.0.1.{host}/32",
+                        "protocol": "tcp",
+                        "ports": "80,443,8443",
+                    }
+                    for host in range(1, 25)
+                ],
+            }
+        )
 
 
 def test_access_policy_rejects_radius_reply_larger_than_udp_budget() -> None:
