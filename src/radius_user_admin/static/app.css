@@ -54,6 +54,8 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .enrollment-card .card-body { padding: 2rem; }
 .enrollment-mark { margin: 0 auto; }
 .enrollment-qr { background: #fff; border: 1px solid rgba(98,105,118,.16); border-radius: 14px; height: min(280px,70vw); padding: .75rem; width: min(280px,70vw); }
+.invitation-qr-box { text-align: center; margin-bottom: 1.25rem; }
+.invitation-qr { background: #fff; border: 1px solid rgba(98,105,118,.16); border-radius: 12px; padding: .5rem; width: 200px; height: 200px; }
 .access-custom { background: #f6f8fb; border: 1px solid rgba(98,105,118,.16); border-radius: 12px; padding: 1rem; }
 .access-rule { align-items: end; display: grid; gap: .65rem; grid-template-columns: minmax(180px,1.4fr) minmax(110px,.65fr) minmax(170px,1fr) auto; margin-bottom: .8rem; }
 .access-rule .form-label { font-size: .75rem; margin-bottom: .3rem; }

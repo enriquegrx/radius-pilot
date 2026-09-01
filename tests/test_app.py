@@ -403,6 +403,42 @@ def test_invitation_page_never_exposes_existing_password(monkeypatch) -> None:
     assert "existing password" not in response.text
 
 
+def test_created_invitation_shows_a_qr_code(monkeypatch) -> None:
+    def creating_helper(operation: str, payload=None):
+        if operation == "invite-create":
+            return {
+                "ok": True,
+                "invitation": {
+                    "token": "T" * 43,
+                    "username": "new-user",
+                    "email": "",
+                    "expires_at": "2030-01-01T00:00:00+00:00",
+                },
+            }
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", creating_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/invitations",
+        data={"csrf": csrf, "username": "new-user"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert 'class="invitation-qr"' in response.text
+    assert "data:image/svg+xml" in response.text
+    # The one-time link is still shown as text alongside the QR.
+    assert "/invite/" + "T" * 43 in response.text
+
+
 def test_login_failure_uses_server_side_flash(monkeypatch) -> None:
     def rejecting_helper(operation: str, _payload=None):
         assert operation == "authenticate-admin"

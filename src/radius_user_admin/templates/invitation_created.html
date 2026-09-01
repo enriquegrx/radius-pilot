@@ -6,7 +6,7 @@
     <meta name="robots" content="noindex,nofollow">
     <title>Invitation for {{ username }} · RadiusPilot</title>
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-7">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-11">
   </head>
   <body class="login-page">
     <main class="login-shell">
@@ -15,6 +15,7 @@
         <h2 class="h2 mb-2">Invitation created</h2>
         <p class="text-secondary">{{ username }} can use this link once, from an approved LAN or VPN network, before {{ expires_at }}.</p>
         {% if delivered %}<div class="alert alert-success">The invitation was emailed to {{ email }}.</div>{% else %}<div class="alert alert-warning">Email delivery is not configured. Copy the link and send it through a trusted channel.</div>{% endif %}
+        {% if invitation_qr %}<div class="invitation-qr-box"><img class="invitation-qr" src="{{ invitation_qr }}" alt="QR code for the one-time invitation link" width="200" height="200"><div class="text-secondary small mt-2">Scan with the phone's camera to open the link.</div></div>{% endif %}
         <label class="form-label" for="invitation-link">One-time link</label>
         <textarea class="form-control secret-link" id="invitation-link" rows="4" readonly>{{ invitation_url }}</textarea>
         <button class="btn btn-primary w-100 mt-3" type="button" data-copy-target="invitation-link">Copy invitation</button>

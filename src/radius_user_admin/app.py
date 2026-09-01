@@ -23,6 +23,11 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+try:
+    import segno
+except ImportError:  # pragma: no cover - QR codes are an optional enhancement
+    segno = None
+
 from .helper_client import HelperError, call_helper
 
 BASE = Path(__file__).resolve().parent
@@ -176,6 +181,15 @@ def access_policy_payload(mode: str, rules_json: str) -> dict[str, object]:
     if not isinstance(rules, list):
         raise HelperError("The custom access rules are invalid.")
     return {"mode": "custom", "rules": rules}
+
+
+def qr_data_uri(value: str) -> str | None:
+    if segno is None:
+        return None
+    try:
+        return segno.make(value, error="m").svg_data_uri(scale=4, border=2)
+    except (ValueError, TypeError):
+        return None
 
 
 def invitation_url(request: Request, token: str) -> str:
@@ -427,6 +441,7 @@ def create_invitation(
             "email": result["email"],
             "expires_at": result["expires_at"],
             "invitation_url": url,
+            "invitation_qr": qr_data_uri(url),
             "delivered": delivered,
         },
     )
