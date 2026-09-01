@@ -25,8 +25,9 @@ before it reaches the live authentication service.
 - Creates, renames, blocks, unblocks, and deletes accounts.
 - Creates one-time invitations so users can choose their own initial password
   and continue directly into Duo Mobile enrollment.
-- Stores new and reset VPN credentials as bcrypt hashes. Existing clear-text
-  entries can be migrated one account at a time with backup and rollback.
+- Stores new and reset VPN credentials as MS-CHAPv2-compatible NT hashes.
+  Existing clear-text entries can be migrated one account at a time with
+  backup and rollback. Cisco IKEv2 cannot validate bcrypt credentials.
 - Switches each enabled account between password plus Duo Push and password only.
 - Protects the console with a separate scrypt-hashed administrator password,
   Duo Push, a 30-minute idle timeout, CSRF protection, and login rate limiting.
@@ -137,10 +138,11 @@ an explicit path prevents it from editing the wrong `authorize` file.
 
 ### Password migration
 
-New accounts and password resets use bcrypt automatically. Upgrade an existing
-installation gradually: migrate one test account, complete a real VPN login,
-then migrate the remainder. Every step creates a normal RadiusPilot backup and
-validates FreeRADIUS before restarting it.
+New accounts and password resets use an MS-CHAPv2-compatible NT hash
+automatically. Upgrade an existing installation gradually: migrate one test
+account, complete a real VPN login, then migrate the remainder. Every step
+creates a normal RadiusPilot backup and validates FreeRADIUS before restarting
+it.
 
 ```bash
 printf '%s\n' '{"username":"pilot-user","_actor":"migration"}' \

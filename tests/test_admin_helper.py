@@ -77,7 +77,7 @@ def test_bootstrap_and_list_never_expose_password(store: Store) -> None:
     assert json.loads(store.state_path.read_text())["users"][0]["password"]
 
 
-def test_new_and_reset_credentials_are_bcrypt_hashes(store: Store) -> None:
+def test_new_and_reset_credentials_are_mschapv2_hashes(store: Store) -> None:
     password = "a-safe-password-2026"
     store.mutate(
         "create",
@@ -85,10 +85,10 @@ def test_new_and_reset_credentials_are_bcrypt_hashes(store: Store) -> None:
     )
     user = next(item for item in store.load()["users"] if item["username"] == "new-user")
     assert "password" not in user
-    assert user["password_hash"].startswith("$2b$12$")
+    assert len(user["nt_password"]) == 32
     assert admin_helper.password_matches(user, password)
     authorize = store.authorize_path.read_text()
-    assert f'new-user Crypt-Password := "{user["password_hash"]}"' in authorize
+    assert f'new-user NT-Password := 0x{user["nt_password"]}' in authorize
     assert password not in authorize
 
     replacement = "a-different-password-2026"
@@ -105,13 +105,13 @@ def test_legacy_credential_migration_is_scoped_and_reversible(store: Store) -> N
     user = store.load()["users"][0]
     assert "password" not in user
     assert admin_helper.password_matches(user, original)
-    assert "Crypt-Password" in store.authorize_path.read_text()
+    assert "NT-Password" in store.authorize_path.read_text()
     assert original not in store.state_path.read_text()
     assert original not in store.authorize_path.read_text()
     assert store.migrate_passwords("vpn-test-user") == []
 
 
-def test_one_time_invitation_creates_bcrypt_user_without_storing_token(store: Store) -> None:
+def test_one_time_invitation_creates_nt_hash_user_without_storing_token(store: Store) -> None:
     invitation = store.invite_create(
         "invited-user", "person@example.test", False, valid_hours=24
     )

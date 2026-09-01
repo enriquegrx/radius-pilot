@@ -26,14 +26,12 @@ from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 
-import bcrypt
-
 USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
 CLEAR_AUTHORIZE_LINE = re.compile(
     r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
 )
-CRYPT_AUTHORIZE_LINE = re.compile(
-    r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Crypt-Password\s*:=\s*"([^"\\]+)"\s*$'
+NT_AUTHORIZE_LINE = re.compile(
+    r"^([a-z0-9][a-z0-9._@-]{0,63})\s+NT-Password\s*:=\s*0x([0-9a-fA-F]{32})\s*$"
 )
 OPERATIONS = {
     "bootstrap",
@@ -132,25 +130,35 @@ def clean_password(value: object) -> str:
     return password
 
 
-def hash_password(password: object) -> str:
-    return bcrypt.hashpw(clean_password(password).encode(), bcrypt.gensalt(rounds=12)).decode()
+def nt_password(password: object) -> str:
+    """Return the MS-CHAPv2-compatible NT hash without exposing the secret in argv."""
+    encoded = clean_password(password).encode("utf-16le")
+    commands = (
+        ["/usr/bin/openssl", "dgst", "-md4", "-binary"],
+        ["/usr/bin/openssl", "dgst", "-provider", "legacy", "-md4", "-binary"],
+    )
+    for command in commands:
+        result = subprocess.run(command, input=encoded, capture_output=True, check=False)
+        if result.returncode == 0 and len(result.stdout) == 16:
+            return result.stdout.hex()
+    raise AdminError("This host cannot generate an MS-CHAPv2 credential safely.")
 
 
-def clean_password_hash(value: object) -> str:
-    password_hash = str(value or "")
-    if not re.fullmatch(r"\$2[aby]\$12\$[./A-Za-z0-9]{53}", password_hash):
-        raise AdminError("The stored VPN password hash is invalid.")
+def clean_nt_password(value: object) -> str:
+    password_hash = str(value or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{32}", password_hash):
+        raise AdminError("The stored MS-CHAPv2 credential is invalid.")
     return password_hash
 
 
 def password_matches(user: dict[str, Any], password: object) -> bool:
     supplied = str(password or "")
-    if "password_hash" in user:
+    if "nt_password" in user:
         try:
-            return bcrypt.checkpw(
-                supplied.encode(), clean_password_hash(user["password_hash"]).encode()
+            return hmac.compare_digest(
+                nt_password(supplied), clean_nt_password(user["nt_password"])
             )
-        except (ValueError, TypeError):
+        except (AdminError, ValueError, TypeError):
             return False
     return hmac.compare_digest(supplied, str(user.get("password") or ""))
 
@@ -263,18 +271,18 @@ class Store:
             if not stripped or stripped.startswith("#"):
                 continue
             clear_match = CLEAR_AUTHORIZE_LINE.fullmatch(stripped)
-            crypt_match = CRYPT_AUTHORIZE_LINE.fullmatch(stripped)
-            if not clear_match and not crypt_match:
+            nt_match = NT_AUTHORIZE_LINE.fullmatch(stripped)
+            if not clear_match and not nt_match:
                 raise AdminError("The existing authorize file contains an unmanaged entry.")
             stamp = now()
             credential = (
                 {"password": decode_radius(clear_match.group(2))}
                 if clear_match
-                else {"password_hash": clean_password_hash(crypt_match.group(2))}
+                else {"nt_password": clean_nt_password(nt_match.group(2))}
             )
             users.append(
                 {
-                    "username": (clear_match or crypt_match).group(1),
+                    "username": (clear_match or nt_match).group(1),
                     **credential,
                     "enabled": True,
                     "duo_required": True,
@@ -298,13 +306,13 @@ class Store:
             raise AdminError("User state has an unsupported format.")
         for user in data["users"]:
             has_clear = "password" in user
-            has_hash = "password_hash" in user
+            has_hash = "nt_password" in user
             if has_clear == has_hash:
                 raise AdminError("Each user must have exactly one VPN credential.")
             if has_clear:
                 clean_password(user["password"])
             else:
-                clean_password_hash(user["password_hash"])
+                clean_nt_password(user["nt_password"])
             user.setdefault("duo_required", True)
             user.setdefault("expires_at", None)
             user.setdefault("duo_bypass_until", None)
@@ -342,7 +350,7 @@ class Store:
             public["panel_access"] = item["username"] in panel_admins
             public["duo_enrollment_active"] = item["username"] in active_enrollments
             public["credential_scheme"] = (
-                "bcrypt" if "password_hash" in item else "legacy-cleartext"
+                "nt-hash" if "nt_password" in item else "legacy-cleartext"
             )
             users.append(public)
         return {"users": users, "health": self.health()}
@@ -442,7 +450,7 @@ class Store:
             data["users"].append(
                 {
                     "username": username,
-                    "password_hash": hash_password(clean_password_value),
+                    "nt_password": nt_password(clean_password_value),
                     "enabled": True,
                     "duo_required": bool(invitation["duo_required"]),
                     "expires_at": None,
@@ -646,7 +654,7 @@ class Store:
                 users.append(
                     {
                         "username": username,
-                        "password_hash": hash_password(payload.get("password")),
+                        "nt_password": nt_password(payload.get("password")),
                         "enabled": True,
                         "duo_required": duo_required,
                         "expires_at": expires_at,
@@ -686,7 +694,7 @@ class Store:
                             )
                         admin_data = self._rename_panel_admin(username, new_username)
                 elif operation == "reset-password":
-                    user["password_hash"] = hash_password(payload.get("password"))
+                    user["nt_password"] = nt_password(payload.get("password"))
                     user.pop("password", None)
                     user["updated_at"] = now()
                 elif operation == "set-enabled":
@@ -735,7 +743,7 @@ class Store:
             self._commit(data, admin_data=admin_data)
 
     def migrate_passwords(self, username: object = None) -> list[str]:
-        """Replace legacy clear-text VPN credentials with bcrypt hashes."""
+        """Replace legacy clear-text VPN credentials with MS-CHAPv2 NT hashes."""
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -747,7 +755,7 @@ class Store:
             for user in data["users"]:
                 if "password" not in user or (selected and user["username"] != selected):
                     continue
-                user["password_hash"] = hash_password(user.pop("password"))
+                user["nt_password"] = nt_password(user.pop("password"))
                 user["updated_at"] = now()
                 migrated.append(user["username"])
             if not migrated:
@@ -809,9 +817,9 @@ class Store:
         lines = ["# Generated by radius-user-admin. Do not edit by hand."]
         for user in sorted(data["users"], key=lambda item: item["username"]):
             if self._effective_enabled(user):
-                if "password_hash" in user:
-                    password_hash = clean_password_hash(user["password_hash"])
-                    lines.append(f'{user["username"]} Crypt-Password := "{password_hash}"')
+                if "nt_password" in user:
+                    password_hash = clean_nt_password(user["nt_password"])
+                    lines.append(f'{user["username"]} NT-Password := 0x{password_hash}')
                 else:
                     lines.append(
                         f'{user["username"]} Cleartext-Password := '
@@ -1121,13 +1129,13 @@ class Store:
         for user in data["users"]:
             clean_username(user.get("username"))
             has_clear = "password" in user
-            has_hash = "password_hash" in user
+            has_hash = "nt_password" in user
             if has_clear == has_hash:
                 raise AdminError("The backup contains an invalid VPN credential.")
             if has_clear:
                 clean_password(user.get("password"))
             else:
-                clean_password_hash(user.get("password_hash"))
+                clean_nt_password(user.get("nt_password"))
             user.setdefault("duo_required", True)
             user.setdefault("expires_at", None)
             user.setdefault("duo_bypass_until", None)

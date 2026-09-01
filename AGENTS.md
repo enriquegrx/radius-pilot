@@ -6,7 +6,7 @@ This repository contains the small, local-only administration console for the
 Example Organization FreeRADIUS user file. Keep its scope narrow: list users, create users,
 choose per-user Duo enforcement, rename users, reset passwords, block/unblock
 users, create one-time account invitations, migrate legacy VPN credentials to
-bcrypt, create time-limited Duo Mobile enrollments through the Auth API, and
+MS-CHAPv2-compatible NT hashes, create time-limited Duo Mobile enrollments through the Auth API, and
 delete users.
 
 ## Security boundaries
@@ -56,7 +56,8 @@ delete users.
   return to Duo when it elapses.
 - Invitation pages stay behind the existing LAN/VPN source allowlist. Do not
   make onboarding a reason to publish the application to the WAN.
-- New and reset VPN credentials use bcrypt. Legacy clear-text credentials may
+- New and reset VPN credentials use NT hashes because Cisco IKEv2 authenticates
+  with MS-CHAPv2. Legacy clear-text credentials may
   be migrated individually, with the existing backup, validation and rollback
   path preserved.
 - Account expirations must be enforced by the reconciliation timer, not only by

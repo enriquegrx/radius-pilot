@@ -132,8 +132,8 @@
         field.querySelector(".js-action-copy").addEventListener("click", async (event) => { if (input.value) { await navigator.clipboard.writeText(input.value); event.currentTarget.textContent = "Copied"; } });
       } else if (action === "credential") {
         title.textContent = `Protect ${user}'s stored password?`;
-        description.textContent = "This replaces the legacy clear-text credential with a bcrypt hash. A backup is created and FreeRADIUS is validated before the change is accepted.";
-        field.innerHTML = `<div class="change-summary"><span>Credential storage</span><strong>Legacy clear text → bcrypt</strong></div>`;
+        description.textContent = "This replaces the legacy clear-text credential with an MS-CHAPv2-compatible NT hash. A backup is created and FreeRADIUS is validated before the change is accepted.";
+        field.innerHTML = `<div class="change-summary"><span>Credential storage</span><strong>Legacy clear text → NT hash</strong></div>`;
         form.action = `/users/${encode(user)}/credential`;
         submit.textContent = "Migrate credential";
       } else if (action === "status") {
@@ -209,7 +209,7 @@
         const panelLabel = data.panelAccess === "true" ? "Revoke panel access" : "Grant panel access";
         const enrollmentLabel = data.duoEnrollmentActive === "true" ? "View Duo enrollment" : "Enroll in Duo";
         const enrollmentHint = data.duoEnrollmentActive === "true" ? "Open the active QR and mobile link" : "Create a seven-day QR activation";
-        const credentialAction = data.credentialScheme === "legacy-cleartext" ? `<button type="button" class="admin-action" data-modal-action="credential">Protect stored password<span>Migrate the credential to bcrypt</span></button>` : "";
+        const credentialAction = data.credentialScheme === "legacy-cleartext" ? `<button type="button" class="admin-action" data-modal-action="credential">Protect stored password<span>Migrate to an MS-CHAPv2-compatible NT hash</span></button>` : "";
         field.innerHTML = `<div class="admin-action-grid"><button type="button" class="admin-action" data-modal-action="rename">Rename user<span>Keep RADIUS and Duo aligned</span></button><button type="button" class="admin-action" data-modal-action="password">Reset VPN password<span>Generate or enter a new secret</span></button>${credentialAction}<button type="button" class="admin-action" data-modal-action="duo-enroll">${enrollmentLabel}<span>${enrollmentHint}</span></button><button type="button" class="admin-action" data-modal-action="duo">${duoLabel}<span>Change VPN second-factor enforcement</span></button><button type="button" class="admin-action" data-modal-action="panel">${panelLabel}<span>Separate console credential + Duo</span></button><button type="button" class="admin-action" data-modal-action="expiry">Set account expiry<span>Automatic access cutoff</span></button><button type="button" class="admin-action" data-modal-action="duo-check">Check Duo readiness<span>Enrollment and Push capability</span></button><button type="button" class="admin-action" data-modal-action="status">${statusLabel}<span>Change VPN access immediately</span></button><button type="button" class="admin-action admin-action-danger" data-modal-action="delete">Delete user<span>Remove the local credential</span></button></div>`;
         field.querySelectorAll("[data-modal-action]").forEach((actionButton) => actionButton.addEventListener("click", () => configureAction(actionButton.dataset.modalAction, data)));
         modal.showModal();

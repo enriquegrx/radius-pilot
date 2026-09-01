@@ -37,7 +37,7 @@ def fake_helper(operation: str, _payload=None):
                 "last_auth": None,
                 "panel_access": True,
                 "duo_enrollment_active": False,
-                "credential_scheme": "bcrypt",
+                "credential_scheme": "nt-hash",
                 "created_at": "2026-09-01T06:00:00+00:00",
                 "updated_at": "2026-09-01T06:00:00+00:00",
             }
