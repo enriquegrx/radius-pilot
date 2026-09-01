@@ -85,7 +85,11 @@ def fake_helper(operation: str, _payload=None):
             "duo_active": True,
             "nginx_active": True,
             "certificate": {"valid": True, "days_remaining": 89},
-            "last_backup": None,
+            "last_backup": {
+                "name": "20260901T060000000000Z",
+                "created_at": "2026-09-01T06:00:00+00:00",
+                "user_count": 2,
+            },
             "disk_free_mb": 4096,
         },
         "duo_enrollment_api": {
@@ -162,6 +166,7 @@ def test_dashboard_shows_expandable_details_and_expiry_warning(monkeypatch) -> N
     assert "Setup readiness" in response.text
     assert "1 account still on legacy clear text" in response.text
     assert "RADIUS_ADMIN_CUSTOM_DACL_ENABLED=0" in response.text
+    assert "Latest snapshot 2026-09-01 06:00 UTC" in response.text
 
 
 def test_duo_enrollment_settings_endpoint_forwards_payload(monkeypatch) -> None:
