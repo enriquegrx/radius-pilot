@@ -70,6 +70,12 @@ DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
 DUO_SECTION = "radius_server_auto"
 BACKUP_NAME = re.compile(r"^(?:\d{8}T\d{12}Z|deploy-\d{8}T\d{6}Z)$")
 ADMIN_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{2,63}$")
+DEFAULT_AUTHORIZE_PATH = Path(
+    os.environ.get(
+        "RADIUS_ADMIN_AUTHORIZE_PATH",
+        "/etc/freeradius/3.0/mods-config/files/vpn-users/authorize",
+    )
+)
 
 
 class AdminError(RuntimeError):
@@ -189,9 +195,7 @@ class Store:
     def __init__(
         self,
         state_path: Path = Path("/var/lib/radius-user-admin/users.json"),
-        authorize_path: Path = Path(
-            "/etc/freeradius/3.0/mods-config/files/vpn-users/authorize"
-        ),
+        authorize_path: Path = DEFAULT_AUTHORIZE_PATH,
         backup_dir: Path = Path("/var/backups/radius-user-admin"),
         lock_path: Path = Path("/run/lock/radius-user-admin.lock"),
         duo_config_path: Path = Path("/opt/duoauthproxy/conf/authproxy.cfg"),

@@ -131,6 +131,10 @@ invitation is displayed once for delivery through a trusted channel. Invitation
 pages remain behind the same LAN/VPN allowlist, and Nginx access logging is
 disabled so bearer tokens do not enter request logs.
 
+Set `RADIUS_ADMIN_AUTHORIZE_PATH` when the managed FreeRADIUS files module uses
+a site-specific directory. The helper deliberately has no directory discovery:
+an explicit path prevents it from editing the wrong `authorize` file.
+
 ### Password migration
 
 New accounts and password resets use bcrypt automatically. Upgrade an existing

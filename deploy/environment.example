@@ -4,6 +4,7 @@ RADIUS_ADMIN_SECURE_COOKIE=1
 RADIUS_ADMIN_PUBLIC_URL=https://radius.your-domain.com
 RADIUS_ADMIN_ALLOWED_HOSTS=radius.your-domain.com,127.0.0.1,localhost
 RADIUS_ADMIN_ORGANIZATION=Your Organization
+RADIUS_ADMIN_AUTHORIZE_PATH=/etc/freeradius/3.0/mods-config/files/vpn-users/authorize
 
 # Optional SMTP delivery for one-time invitations. Without this block, the
 # panel displays each invitation once so an administrator can copy it.
