@@ -50,6 +50,8 @@ OPERATIONS = {
     "backups",
     "restore",
     "duo-check",
+    "duo-enroll",
+    "duo-enrollment",
 }
 DUO_BEGIN = "# BEGIN RADIUS USER ADMIN EXEMPTIONS"
 DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
@@ -137,6 +139,8 @@ class Store:
         audit_path: Path = Path("/var/lib/radius-user-admin/audit.jsonl"),
         auth_events_path: Path = Path("/opt/duoauthproxy/log/authevents.log"),
         certificate_path: Path = Path("/etc/ssl/radius-user-admin/fullchain.pem"),
+        enrollment_path: Path = Path("/var/lib/radius-user-admin/duo-enrollments.json"),
+        duo_enroll_config_path: Path = Path("/etc/radius-user-admin/duo-enroll-api.json"),
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
         self.state_path = state_path
@@ -148,6 +152,8 @@ class Store:
         self.audit_path = audit_path
         self.auth_events_path = auth_events_path
         self.certificate_path = certificate_path
+        self.enrollment_path = enrollment_path
+        self.duo_enroll_config_path = duo_enroll_config_path
         self.runner = runner
 
     def bootstrap(self) -> None:
@@ -213,6 +219,12 @@ class Store:
         data = self.load()
         auth = self.last_authentication()
         panel_admins = self.panel_admin_usernames()
+        current_timestamp = int(datetime.now(UTC).timestamp())
+        active_enrollments = {
+            username
+            for username, enrollment in self._load_enrollments().items()
+            if int(enrollment.get("expiration") or 0) > current_timestamp
+        }
         users = []
         for item in sorted(data["users"], key=lambda user: user["username"]):
             public = {
@@ -232,6 +244,7 @@ class Store:
             public["effective_duo_required"] = self._effective_duo_required(item)
             public["last_auth"] = auth.get(item["username"])
             public["panel_access"] = item["username"] in panel_admins
+            public["duo_enrollment_active"] = item["username"] in active_enrollments
             users.append(public)
         return {"users": users, "health": self.health()}
 
@@ -832,12 +845,95 @@ class Store:
         )
         return duo.get("result") == "allow"
 
+    def duo_enroll(self, username: object, valid_secs: int = 604800) -> dict[str, Any]:
+        clean = clean_username(username)
+        if not any(user["username"] == clean for user in self.load()["users"]):
+            raise AdminError("Create the local VPN user before enrolling it in Duo.")
+        if not isinstance(valid_secs, int) or not 300 <= valid_secs <= 2592000:
+            raise AdminError("Invalid Duo enrollment lifetime.")
+        readiness = self.duo_check(clean)
+        if readiness["result"] == "auth":
+            raise AdminError("That user is already enrolled in Duo.")
+        if readiness["result"] != "enroll":
+            raise AdminError(f"Duo cannot enroll this user: {readiness['status']}")
+        duo = self._duo_request(
+            "/auth/v2/enroll",
+            {"username": clean, "valid_secs": str(valid_secs)},
+            timeout=15,
+            error_message="Duo could not create the enrollment.",
+            credentials=self._duo_enroll_credentials(),
+        )
+        if not isinstance(duo, dict):
+            raise AdminError("Duo returned an invalid enrollment response.")
+        enrollment = {
+            "username": clean,
+            "user_id": str(duo.get("user_id") or ""),
+            "activation_url": self._validated_duo_url(duo.get("activation_url")),
+            "activation_barcode": self._validated_duo_url(duo.get("activation_barcode")),
+            "expiration": int(duo.get("expiration") or 0),
+            "created_at": now(),
+        }
+        if not enrollment["user_id"] or enrollment["expiration"] <= int(
+            datetime.now(UTC).timestamp()
+        ):
+            raise AdminError("Duo returned an incomplete enrollment response.")
+        data = self._load_enrollments()
+        data[clean] = enrollment
+        self._atomic_write(
+            self.enrollment_path,
+            json.dumps({"version": 1, "enrollments": data}, indent=2) + "\n",
+            0o600,
+        )
+        return enrollment
+
+    def duo_enrollment(self, username: object) -> dict[str, Any]:
+        clean = clean_username(username)
+        enrollment = self._load_enrollments().get(clean)
+        if not enrollment:
+            raise AdminError("No active Duo enrollment was found for that user.")
+        if int(enrollment.get("expiration") or 0) <= int(datetime.now(UTC).timestamp()):
+            raise AdminError("The Duo enrollment has expired.")
+        return enrollment
+
+    def _load_enrollments(self) -> dict[str, Any]:
+        if not self.enrollment_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.enrollment_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AdminError("Duo enrollment state is unavailable.") from exc
+        if payload.get("version") != 1 or not isinstance(payload.get("enrollments"), dict):
+            raise AdminError("Duo enrollment state has an unsupported format.")
+        return {
+            username: enrollment
+            for username, enrollment in payload["enrollments"].items()
+            if isinstance(enrollment, dict)
+        }
+
+    @staticmethod
+    def _validated_duo_url(value: object) -> str:
+        url = str(value or "")
+        parsed = urllib.parse.urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not hostname.endswith(".duosecurity.com"):
+            raise AdminError("Duo returned an invalid activation URL.")
+        return url
+
     def _duo_request(
-        self, path: str, parameters: dict[str, str], *, timeout: int
-    ) -> dict[str, Any]:
-        config = self.duo_config_path.read_text()
-        section = self._config_section(config, DUO_SECTION)
-        required = {name: section.get(name, "") for name in ("ikey", "skey", "api_host")}
+        self,
+        path: str,
+        parameters: dict[str, str],
+        *,
+        timeout: int,
+        error_message: str = "Duo user readiness could not be checked.",
+        credentials: dict[str, str] | None = None,
+    ) -> Any:
+        if credentials is None:
+            config = self.duo_config_path.read_text()
+            section = self._config_section(config, DUO_SECTION)
+            required = {name: section.get(name, "") for name in ("ikey", "skey", "api_host")}
+        else:
+            required = credentials
         if not all(required.values()):
             raise AdminError("The Duo integration is incomplete.")
         params = urllib.parse.urlencode(sorted(parameters.items()))
@@ -861,8 +957,26 @@ class Store:
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
                 payload = json.loads(response.read())
         except (OSError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
-            raise AdminError("Duo user readiness could not be checked.") from exc
+            raise AdminError(error_message) from exc
+        if payload.get("stat") != "OK":
+            duo_message = str(payload.get("message") or error_message)[:160]
+            raise AdminError(duo_message)
         return payload.get("response", {})
+
+    def _duo_enroll_credentials(self) -> dict[str, str]:
+        try:
+            config = json.loads(self.duo_enroll_config_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AdminError("The Duo enrollment integration is not configured.") from exc
+        required = {
+            name: str(config.get(name) or "").strip()
+            for name in ("ikey", "skey", "api_host")
+        }
+        host = required["api_host"].lower()
+        if not all(required.values()) or not host.endswith(".duosecurity.com"):
+            raise AdminError("The Duo enrollment integration is invalid.")
+        required["api_host"] = host
+        return required
 
     @staticmethod
     def _config_section(config: str, name: str) -> dict[str, str]:
@@ -1043,6 +1157,10 @@ def main() -> int:
             result = {}
         elif args.operation == "duo-check":
             result = {"duo": store.duo_check(payload.get("username"))}
+        elif args.operation == "duo-enroll":
+            result = {"enrollment": store.duo_enroll(payload.get("username"))}
+        elif args.operation == "duo-enrollment":
+            result = {"enrollment": store.duo_enrollment(payload.get("username"))}
         elif args.operation == "set-panel-access":
             store.set_panel_access(
                 payload.get("username"),
@@ -1073,6 +1191,7 @@ def main() -> int:
             "restore",
             "set-admin-password",
             "set-panel-access",
+            "duo-enroll",
             "reconcile",
         }:
             detail = ", ".join(result.get("changes", [])) if args.operation == "reconcile" else ""

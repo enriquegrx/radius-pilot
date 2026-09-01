@@ -47,6 +47,11 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .login-brand p,.login-note { color: #667085; margin: 0; }
 .login-card { border: 0; box-shadow: 0 18px 60px rgba(16,36,62,.12); }
 .login-note { font-size: .8125rem; text-align: center; }
+.enrollment-page { align-items: center; display: flex; justify-content: center; min-height: 100vh; padding: 1rem; }
+.enrollment-card { border: 0; box-shadow: 0 18px 60px rgba(16,36,62,.14); max-width: 480px; width: 100%; }
+.enrollment-card .card-body { padding: 2rem; }
+.enrollment-mark { margin: 0 auto; }
+.enrollment-qr { background: #fff; border: 1px solid rgba(98,105,118,.16); border-radius: 14px; height: min(280px,70vw); padding: .75rem; width: min(280px,70vw); }
 .admin-action-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2,minmax(0,1fr)); }
 .admin-action { background: #fff; border: 1px solid rgba(98,105,118,.22); border-radius: 10px; color: var(--brand-ink); min-height: 88px; padding: 1rem; text-align: left; transition: border-color .15s ease,box-shadow .15s ease,transform .15s ease; }
 .admin-action span { color: #667085; display: block; font-size: .8125rem; font-weight: 400; margin-top: .25rem; }

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Enroll {{ username }} · Radius User Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-6">
+  </head>
+  <body>
+    <main class="enrollment-page">
+      <div class="card enrollment-card">
+        <div class="card-body text-center">
+          <div class="brand-mark enrollment-mark" aria-hidden="true">D</div>
+          <h1 class="h2 mt-3">Enroll {{ username }} in Duo</h1>
+          <p class="text-secondary">Open Duo Mobile, tap <strong>Add</strong>, and scan this QR code.</p>
+          <img class="enrollment-qr" src="{{ activation_barcode }}" alt="Duo activation QR code for {{ username }}">
+          <div class="mt-4 d-grid gap-2">
+            <a class="btn btn-primary" href="{{ activation_url }}" rel="noreferrer">Open in Duo Mobile</a>
+            <a class="btn btn-outline-secondary" href="/">Return to users</a>
+          </div>
+          <p class="small text-secondary mt-3 mb-0">Expires {{ expires_at }}. Treat this page like a temporary credential.</p>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

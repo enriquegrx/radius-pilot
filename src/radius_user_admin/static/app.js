@@ -104,6 +104,7 @@
       const user = data.user;
       submit.hidden = false;
       submit.className = "btn btn-primary";
+      form.method = "post";
       cancel.textContent = "Cancel";
       field.innerHTML = "";
       if (action === "rename") {
@@ -149,6 +150,14 @@
         field.innerHTML = "";
         form.action = `/users/${encode(user)}/duo-check`;
         submit.textContent = "Check Duo";
+      } else if (action === "duo-enroll") {
+        const activeEnrollment = data.duoEnrollmentActive === "true";
+        title.textContent = `${activeEnrollment ? "View" : "Create"} Duo enrollment for ${user}?`;
+        description.textContent = activeEnrollment ? "The current activation is still valid." : "Duo will create the user and issue a QR code valid for seven days.";
+        field.innerHTML = `<div class="change-summary"><span>Second factor</span><strong>${activeEnrollment ? "Active Duo Mobile QR" : "Create Duo Mobile activation"}</strong></div>`;
+        form.action = `/users/${encode(user)}/duo-${activeEnrollment ? "enrollment" : "enroll"}`;
+        form.method = activeEnrollment ? "get" : "post";
+        submit.textContent = activeEnrollment ? "View QR" : "Create enrollment";
       } else if (action === "panel") {
         const enable = data.panelAccess !== "true";
         title.textContent = `${enable ? "Grant" : "Revoke"} panel access for ${user}?`;
@@ -184,7 +193,9 @@
         const statusLabel = data.enabled === "true" ? "Block user" : "Unblock user";
         const duoLabel = data.duoRequired === "true" ? "Use password only" : "Require Duo Push";
         const panelLabel = data.panelAccess === "true" ? "Revoke panel access" : "Grant panel access";
-        field.innerHTML = `<div class="admin-action-grid"><button type="button" class="admin-action" data-modal-action="rename">Rename user<span>Keep RADIUS and Duo aligned</span></button><button type="button" class="admin-action" data-modal-action="password">Reset VPN password<span>Generate or enter a new secret</span></button><button type="button" class="admin-action" data-modal-action="duo">${duoLabel}<span>Change VPN second-factor enforcement</span></button><button type="button" class="admin-action" data-modal-action="panel">${panelLabel}<span>Separate console credential + Duo</span></button><button type="button" class="admin-action" data-modal-action="expiry">Set account expiry<span>Automatic access cutoff</span></button><button type="button" class="admin-action" data-modal-action="duo-check">Check Duo readiness<span>Enrollment and Push capability</span></button><button type="button" class="admin-action" data-modal-action="status">${statusLabel}<span>Change VPN access immediately</span></button><button type="button" class="admin-action admin-action-danger" data-modal-action="delete">Delete user<span>Remove the local credential</span></button></div>`;
+        const enrollmentLabel = data.duoEnrollmentActive === "true" ? "View Duo enrollment" : "Enroll in Duo";
+        const enrollmentHint = data.duoEnrollmentActive === "true" ? "Open the active QR and mobile link" : "Create a seven-day QR activation";
+        field.innerHTML = `<div class="admin-action-grid"><button type="button" class="admin-action" data-modal-action="rename">Rename user<span>Keep RADIUS and Duo aligned</span></button><button type="button" class="admin-action" data-modal-action="password">Reset VPN password<span>Generate or enter a new secret</span></button><button type="button" class="admin-action" data-modal-action="duo-enroll">${enrollmentLabel}<span>${enrollmentHint}</span></button><button type="button" class="admin-action" data-modal-action="duo">${duoLabel}<span>Change VPN second-factor enforcement</span></button><button type="button" class="admin-action" data-modal-action="panel">${panelLabel}<span>Separate console credential + Duo</span></button><button type="button" class="admin-action" data-modal-action="expiry">Set account expiry<span>Automatic access cutoff</span></button><button type="button" class="admin-action" data-modal-action="duo-check">Check Duo readiness<span>Enrollment and Push capability</span></button><button type="button" class="admin-action" data-modal-action="status">${statusLabel}<span>Change VPN access immediately</span></button><button type="button" class="admin-action admin-action-danger" data-modal-action="delete">Delete user<span>Remove the local credential</span></button></div>`;
         field.querySelectorAll("[data-modal-action]").forEach((actionButton) => actionButton.addEventListener("click", () => configureAction(actionButton.dataset.modalAction, data)));
         modal.showModal();
       });

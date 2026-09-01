@@ -61,7 +61,7 @@
                     <td>{% if user.effective_duo_required %}<span class="badge bg-blue-lt">Duo Push</span>{% else %}<span class="badge bg-yellow-lt">Password only</span>{% if user.duo_bypass_reason %}<div class="small text-secondary mt-1" title="{{ user.duo_bypass_reason }}">{{ user.duo_bypass_reason[:28] }}{% if user.duo_bypass_reason|length > 28 %}…{% endif %}</div>{% endif %}{% endif %}</td>
                     <td class="text-secondary">{% if user.last_auth %}<span class="auth-status auth-{{ user.last_auth.status | lower }}">{{ user.last_auth.status }}</span><div class="small">{{ user.last_auth.timestamp[:16] | replace('T', ' ') }} UTC</div>{% else %}Never recorded{% endif %}</td>
                     <td class="text-secondary">{% if user.expires_at %}{{ user.expires_at[:16] | replace('T', ' ') }} UTC{% else %}No expiry{% endif %}</td>
-                    <td><button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}" data-panel-access="{{ 'true' if user.panel_access else 'false' }}" data-expires-at="{{ user.expires_at or '' }}" data-bypass-until="{{ user.duo_bypass_until or '' }}" data-bypass-reason="{{ user.duo_bypass_reason }}">Manage</button></td>
+                    <td><button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}" data-panel-access="{{ 'true' if user.panel_access else 'false' }}" data-duo-enrollment-active="{{ 'true' if user.duo_enrollment_active else 'false' }}" data-expires-at="{{ user.expires_at or '' }}" data-bypass-until="{{ user.duo_bypass_until or '' }}" data-bypass-reason="{{ user.duo_bypass_reason }}">Manage</button></td>
                   </tr>
                   {% else %}<tr><td colspan="6"><div class="empty py-5"><p class="empty-title">No users available</p></div></td></tr>{% endfor %}
                   <tr id="no-filter-results" hidden><td colspan="6" class="text-center text-secondary py-5">No users match this search.</td></tr>
@@ -117,6 +117,6 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-warning">Restore backup</button></div>
     </form></dialog>
 
-    <script src="{{ url_for('static', path='app.js') }}?v=20260901-5"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260901-6"></script>
   </body>
 </html>

@@ -34,6 +34,7 @@ def fake_helper(operation: str, _payload=None):
                 "duo_bypass_reason": "",
                 "last_auth": None,
                 "panel_access": True,
+                "duo_enrollment_active": False,
                 "created_at": "2026-09-01T06:00:00+00:00",
                 "updated_at": "2026-09-01T06:00:00+00:00",
             }

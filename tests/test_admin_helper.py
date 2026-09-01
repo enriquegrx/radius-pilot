@@ -60,6 +60,8 @@ port=1812
         audit_path=tmp_path / "state/audit.jsonl",
         auth_events_path=tmp_path / "authevents.log",
         certificate_path=tmp_path / "fullchain.pem",
+        enrollment_path=tmp_path / "state/duo-enrollments.json",
+        duo_enroll_config_path=tmp_path / "duo-enroll-api.json",
         runner=Runner(),
     )
     result.bootstrap()
@@ -178,6 +180,62 @@ def test_username_policy_rejects_unsafe_values(username: str) -> None:
 
 def test_username_is_normalized_to_lowercase() -> None:
     assert admin_helper.clean_username("QUIQUE") == "quique"
+
+
+def test_duo_enrollment_is_kept_root_only(store: Store) -> None:
+    store.mutate(
+        "create",
+        {
+            "username": "quique",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+        },
+    )
+    store.duo_check = lambda _username: {  # type: ignore[method-assign]
+        "result": "enroll",
+        "status": "Enroll an authentication device to proceed",
+    }
+    store._duo_enroll_credentials = lambda: {  # type: ignore[method-assign]
+        "ikey": "test", "skey": "test", "api_host": "api.example.test"
+    }
+    store._duo_request = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "user_id": "DU123",
+        "activation_url": "https://m-example.duosecurity.com/activate/code",
+        "activation_barcode": "https://api-example.duosecurity.com/frame/qr?value=code",
+        "expiration": 4102444800,
+    }
+    enrollment = store.duo_enroll("quique")
+    assert enrollment["username"] == "quique"
+    assert store.duo_enrollment("quique")["user_id"] == "DU123"
+    assert store.enrollment_path.stat().st_mode & 0o777 == 0o600
+    public = {user["username"]: user for user in store.public_list()["users"]}
+    assert public["quique"]["duo_enrollment_active"] is True
+
+
+def test_duo_enrollment_rejects_untrusted_activation_host(store: Store) -> None:
+    store.mutate(
+        "create",
+        {
+            "username": "quique",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+        },
+    )
+    store.duo_check = lambda _username: {  # type: ignore[method-assign]
+        "result": "enroll",
+        "status": "Enrollment required",
+    }
+    store._duo_enroll_credentials = lambda: {  # type: ignore[method-assign]
+        "ikey": "test", "skey": "test", "api_host": "api.example.test"
+    }
+    store._duo_request = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "user_id": "DU123",
+        "activation_url": "https://evil.example/activate/code",
+        "activation_barcode": "https://api-example.duosecurity.com/frame/qr?value=code",
+        "expiration": 4102444800,
+    }
+    with pytest.raises(AdminError, match="invalid activation URL"):
+        store.duo_enroll("quique")
 
 
 def test_admin_password_is_hashed_and_authenticates(store: Store) -> None:

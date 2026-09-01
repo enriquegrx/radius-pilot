@@ -297,10 +297,20 @@ def create_user(
         bypass_expiry = utc_form_time(duo_bypass_until)
     except HelperError as exc:
         return redirect(str(exc), "danger", "users")
+    enrollment_needed = False
     if duo_required or panel_access:
         try:
             readiness = call_helper("duo-check", {"username": username})["duo"]
-            if readiness.get("result") != "auth" or not readiness.get("push_capable"):
+            enrollment_needed = readiness.get("result") == "enroll"
+            if panel_access and enrollment_needed:
+                return redirect(
+                    "Create the VPN user, complete Duo enrollment, then grant panel access.",
+                    "warning",
+                    "users",
+                )
+            if not enrollment_needed and (
+                readiness.get("result") != "auth" or not readiness.get("push_capable")
+            ):
                 return redirect(
                     f"Duo is not ready for {username}: "
                     f"{readiness.get('status', 'unknown status')}.",
@@ -309,21 +319,33 @@ def create_user(
                 )
         except HelperError as exc:
             return redirect(str(exc), "danger", "users")
-    return mutate(
-        request,
-        csrf,
-        "create",
-        {
-            "username": username,
-            "password": password,
-            "duo_required": duo_required,
-            "expires_at": account_expiry,
-            "duo_bypass_until": bypass_expiry,
-            "duo_bypass_reason": duo_bypass_reason,
-            "panel_access": panel_access,
-            "panel_password": panel_password,
-        },
-    )
+    payload = {
+        "username": username,
+        "password": password,
+        "duo_required": duo_required,
+        "expires_at": account_expiry,
+        "duo_bypass_until": bypass_expiry,
+        "duo_bypass_reason": duo_bypass_reason,
+        "panel_access": panel_access,
+        "panel_password": panel_password,
+    }
+    try:
+        call_helper("create", helper_payload(request, payload))
+        if enrollment_needed:
+            call_helper("duo-enroll", helper_payload(request, {"username": username}))
+            return RedirectResponse(
+                f"/users/{quote(username.strip().lower(), safe='')}/duo-enrollment",
+                status_code=303,
+            )
+        return redirect("User created and authentication services validated.", anchor="users")
+    except HelperError as exc:
+        if enrollment_needed:
+            return redirect(
+                f"Check the user list. Duo enrollment did not complete: {exc}",
+                "danger",
+                "users",
+            )
+        return redirect(str(exc), "danger", "users")
 
 
 @app.post("/users/{username}/rename")
@@ -442,6 +464,47 @@ def check_duo(username: str, request: Request, csrf: str = Form()):
         )
     except HelperError as exc:
         return redirect(str(exc), "danger", "users")
+
+
+@app.post("/users/{username}/duo-enroll")
+def enroll_duo(username: str, request: Request, csrf: str = Form()):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    try:
+        check_csrf(request, csrf)
+        call_helper("duo-enroll", helper_payload(request, {"username": username}))
+        return RedirectResponse(
+            f"/users/{quote(username, safe='')}/duo-enrollment", status_code=303
+        )
+    except HelperError as exc:
+        return redirect(str(exc), "danger", "users")
+
+
+@app.get("/users/{username}/duo-enrollment")
+def duo_enrollment_page(username: str, request: Request):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    try:
+        enrollment = call_helper("duo-enrollment", {"username": username})["enrollment"]
+        expires_at = datetime.fromtimestamp(int(enrollment["expiration"]), UTC).astimezone(
+            LOCAL_ZONE
+        )
+    except (HelperError, KeyError, TypeError, ValueError, OSError) as exc:
+        return redirect(str(exc) or "Duo enrollment is unavailable.", "danger", "users")
+    return templates.TemplateResponse(
+        request,
+        "duo_enrollment.html",
+        {
+            "admin": admin,
+            "csrf": csrf_token(request),
+            "username": enrollment["username"],
+            "activation_url": enrollment["activation_url"],
+            "activation_barcode": enrollment["activation_barcode"],
+            "expires_at": expires_at.strftime("%d/%m/%Y %H:%M %Z"),
+        },
+    )
 
 
 @app.post("/users/{username}/panel")

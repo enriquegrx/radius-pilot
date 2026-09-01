@@ -24,6 +24,8 @@ is no WAN NAT, Cloudflare Tunnel, or public admin path.
 - Supports account expirations and time-limited password-only exceptions; a
   systemd timer enforces both automatically every five minutes.
 - Checks Duo enrollment and Push capability before enabling Duo for an account.
+- Creates seven-day Duo Mobile activations through the Auth API and presents the
+  QR code or mobile activation link only to a signed-in panel administrator.
 - Shows service, certificate, disk, and backup health, and exports redacted
   diagnostics and audit CSV files.
 - Lists configuration backups and restores them through the same validation and
@@ -66,6 +68,10 @@ The helper maintains:
   console administrator; it does not contain the clear-text password.
 - `/var/lib/radius-user-admin/audit.jsonl` — append-only administrative audit
   events with actor and source address, never credentials.
+- `/var/lib/radius-user-admin/duo-enrollments.json` — root-only temporary Duo
+  activation links and expiry times.
+- `/etc/radius-user-admin/duo-enroll-api.json` — root-only credentials for the
+  dedicated Auth API enrollment integration; this file must never enter Git.
 - `/var/backups/radius-user-admin/` — dated snapshots before every mutation.
 
 Authentication history is read from Duo Authentication Proxy's structured
