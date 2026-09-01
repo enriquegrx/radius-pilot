@@ -11,7 +11,7 @@ import urllib.request
 API = "https://api.cloudflare.com/client/v4"
 ZONE = "your-domain.com"
 NAME = "radius.your-domain.com"
-ADDRESS = "172.26.200.112"
+ADDRESS = "192.0.2.112"
 CREDENTIALS = "/etc/letsencrypt/cloudflare.ini"
 
 
