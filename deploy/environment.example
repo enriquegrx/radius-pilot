@@ -23,3 +23,8 @@ RADIUS_ADMIN_SMTP_STARTTLS=1
 RADIUS_ADMIN_SMTP_USERNAME=radiuspilot@your-domain.com
 RADIUS_ADMIN_SMTP_PASSWORD=replace-with-an-app-password
 RADIUS_ADMIN_SMTP_FROM=RadiusPilot <radiuspilot@your-domain.com>
+
+# Optional. With SMTP configured, the reconciler emails this address a digest
+# of accounts expiring within the warning window. Each account is warned once.
+RADIUS_ADMIN_ADMIN_EMAIL=vpn-admins@your-domain.com
+RADIUS_ADMIN_EXPIRY_WARNING_DAYS=7

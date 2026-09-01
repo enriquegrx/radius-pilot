@@ -6,7 +6,7 @@
     <meta name="robots" content="noindex,nofollow">
     <title>RadiusPilot</title>
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-6">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-11">
   </head>
   <body data-custom-access-enabled="{{ 'true' if custom_access_enabled else 'false' }}" data-access-objects="{{ access_objects | map(attribute='name') | list | tojson | forceescape }}">
     <div class="page">
@@ -23,6 +23,7 @@
               <a class="status status-red" href="#system"><span class="status-dot"></span>Service needs attention</a>
             {% endif %}
             <span class="admin-identity">{{ admin }}</span>
+            <button class="btn btn-ghost-secondary btn-sm" type="button" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode"><span class="theme-toggle-light">Dark</span><span class="theme-toggle-dark">Light</span></button>
             <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost-secondary btn-sm">Sign out</button></form>
             <button class="btn btn-outline-primary" type="button" data-dialog-open="invite-modal">Invite user</button>
             <button class="btn btn-primary" type="button" data-dialog-open="create-modal">Add user</button>
@@ -79,7 +80,7 @@
                       {% if user.access_avpairs %}<div class="detail-label mt-2">Compiled RADIUS reply (what the gateway applies)</div><pre class="detail-acl">{{ user.access_avpairs | join('\n') }}</pre>{% endif %}
                       {% endif %}
                     </div>
-                    <div class="user-detail-actions"><button type="button" class="btn btn-outline-warning btn-sm" data-row-action="status">{{ 'Block user' if user.enabled else 'Unblock user' }}</button><button type="button" class="btn btn-outline-danger btn-sm" data-row-action="delete">Delete user</button></div>
+                    <div class="user-detail-actions"><button type="button" class="btn btn-outline-secondary btn-sm js-view-activity" data-username="{{ user.username }}">View activity</button><button type="button" class="btn btn-outline-warning btn-sm" data-row-action="status">{{ 'Block user' if user.enabled else 'Unblock user' }}</button><button type="button" class="btn btn-outline-danger btn-sm" data-row-action="delete">Delete user</button></div>
                   </div></td></tr>
                   {% else %}<tr><td colspan="7"><div class="empty py-5"><p class="empty-title">No users available</p></div></td></tr>{% endfor %}
                   <tr id="no-filter-results" hidden><td colspan="7" class="text-center text-secondary py-5">No users match this search.</td></tr>
@@ -97,7 +98,7 @@
             <div class="card mt-3">
               <div class="card-header user-card-header">
                 <div><h3 class="card-title mb-1">Access objects</h3><div class="text-secondary small">Reusable destinations and services. Edits propagate to every policy that references the object.</div></div>
-                <button class="btn btn-outline-primary btn-sm" type="button" id="add-access-object" {% if not custom_access_enabled %}disabled title="Enable custom access first"{% endif %}>Add object</button>
+                <div class="d-flex gap-2">{% if access_objects %}<a class="btn btn-outline-secondary btn-sm" href="/access-objects/export">Export</a>{% endif %}<button class="btn btn-outline-secondary btn-sm" type="button" data-dialog-open="object-import-modal" {% if not custom_access_enabled %}disabled title="Enable custom access first"{% endif %}>Import</button><button class="btn btn-outline-primary btn-sm" type="button" id="add-access-object" {% if not custom_access_enabled %}disabled title="Enable custom access first"{% endif %}>Add object</button></div>
               </div>
               <div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Name</th><th>Description</th><th>Contents</th><th>Used by</th><th class="w-1"></th></tr></thead><tbody>
                 {% for object in access_objects %}
@@ -114,10 +115,10 @@
           </section>
 
           <section id="activity" class="console-section">
-            <div class="section-heading"><div><h2>Activity</h2><p>Administrative changes and recent VPN authentication events.</p></div><a class="btn btn-outline-secondary" href="/audit.csv">Export audit CSV</a></div>
+            <div class="section-heading"><div><h2>Activity</h2><p>Administrative changes and recent VPN authentication events.</p></div><div class="d-flex gap-2 align-items-center"><label class="visually-hidden" for="activity-search">Filter activity</label><input class="form-control" id="activity-search" type="search" placeholder="Filter by user or action…"><a class="btn btn-outline-secondary" href="/audit.csv">Export audit CSV</a></div></div>
             <div class="activity-grid">
-              <div class="card"><div class="card-header"><h3 class="card-title">Administrative audit</h3></div><div class="table-responsive"><table class="table table-sm card-table"><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th></tr></thead><tbody>{% for event in audit_events[:20] %}<tr><td class="text-secondary">{{ event.timestamp[:16] | replace('T', ' ') }}</td><td>{{ event.actor }}<div class="small text-secondary">{{ event.source_ip }}</div></td><td>{{ event.action }}</td><td>{{ event.target or '—' }}</td><td><span class="badge {{ 'bg-green-lt' if event.result == 'success' else 'bg-red-lt' }}">{{ event.result }}</span></td></tr>{% else %}<tr><td colspan="5" class="text-secondary py-4">No administrative events recorded yet.</td></tr>{% endfor %}</tbody></table></div></div>
-              <div class="card"><div class="card-header"><h3 class="card-title">VPN authentication</h3></div><div class="table-responsive"><table class="table table-sm card-table"><thead><tr><th>When</th><th>User</th><th>Stage</th><th>Result</th></tr></thead><tbody>{% for event in auth_events[:20] %}<tr><td class="text-secondary">{{ event.timestamp[:16] | replace('T', ' ') }}</td><td>{{ event.username }}{% if event.client_ip %}<div class="small text-secondary">{{ event.client_ip }}</div>{% endif %}</td><td>{{ event.stage }}</td><td><span class="badge {{ 'bg-green-lt' if event.status == 'Allow' else 'bg-red-lt' }}">{{ event.status }}</span></td></tr>{% else %}<tr><td colspan="4" class="text-secondary py-4">No authentication events recorded.</td></tr>{% endfor %}</tbody></table></div></div>
+              <div class="card"><div class="card-header"><h3 class="card-title">Administrative audit</h3></div><div class="table-responsive"><table class="table table-sm card-table" data-activity-table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th></tr></thead><tbody>{% for event in audit_events[:100] %}<tr data-activity-row {% if loop.index > 20 %}class="activity-extra" hidden{% endif %} data-search="{{ (event.actor ~ ' ' ~ event.action ~ ' ' ~ (event.target or '')) | lower }}"><td class="text-secondary">{{ event.timestamp[:16] | replace('T', ' ') }}</td><td>{{ event.actor }}<div class="small text-secondary">{{ event.source_ip }}</div></td><td>{{ event.action }}</td><td>{{ event.target or '—' }}</td><td><span class="badge {{ 'bg-green-lt' if event.result == 'success' else 'bg-red-lt' }}">{{ event.result }}</span></td></tr>{% else %}<tr><td colspan="5" class="text-secondary py-4">No administrative events recorded yet.</td></tr>{% endfor %}<tr data-activity-empty hidden><td colspan="5" class="text-center text-secondary py-4">No matching events.</td></tr></tbody></table></div>{% if audit_events|length > 20 %}<div class="card-footer text-center"><button type="button" class="btn btn-outline-secondary btn-sm js-activity-more">Show more</button></div>{% endif %}</div>
+              <div class="card"><div class="card-header"><h3 class="card-title">VPN authentication</h3></div><div class="table-responsive"><table class="table table-sm card-table" data-activity-table><thead><tr><th>When</th><th>User</th><th>Stage</th><th>Result</th></tr></thead><tbody>{% for event in auth_events[:100] %}<tr data-activity-row {% if loop.index > 20 %}class="activity-extra" hidden{% endif %} data-search="{{ (event.username ~ ' ' ~ event.stage ~ ' ' ~ event.status) | lower }}"><td class="text-secondary">{{ event.timestamp[:16] | replace('T', ' ') }}</td><td>{{ event.username }}{% if event.client_ip %}<div class="small text-secondary">{{ event.client_ip }}</div>{% endif %}</td><td>{{ event.stage }}</td><td><span class="badge {{ 'bg-green-lt' if event.status == 'Allow' else 'bg-red-lt' }}">{{ event.status }}</span></td></tr>{% else %}<tr><td colspan="4" class="text-secondary py-4">No authentication events recorded.</td></tr>{% endfor %}<tr data-activity-empty hidden><td colspan="4" class="text-center text-secondary py-4">No matching events.</td></tr></tbody></table></div>{% if auth_events|length > 20 %}<div class="card-footer text-center"><button type="button" class="btn btn-outline-secondary btn-sm js-activity-more">Show more</button></div>{% endif %}</div>
             </div>
           </section>
 
@@ -215,12 +216,22 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-primary">Save object</button></div>
     </form></dialog>
 
+    <dialog class="admin-dialog" id="object-import-modal" aria-labelledby="object-import-title"><form class="modal-content" method="post" action="/access-objects/import">
+      <div class="modal-header"><h2 class="modal-title" id="object-import-title">Import access objects</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
+      <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="form-label" for="objects-json">Paste an exported <code>access-objects.json</code></label>
+        <textarea class="form-control" id="objects-json" name="objects_json" rows="10" required maxlength="60000" placeholder='{"access_objects": [ ... ]}'></textarea>
+        <small class="form-hint d-block mt-2">Objects are added or updated by name. The whole set and every referencing policy are revalidated before anything is saved.</small>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-primary">Import</button></div>
+    </form></dialog>
+
     <dialog class="admin-dialog" id="object-delete-modal" aria-labelledby="object-delete-title"><form class="modal-content" id="object-delete-form" method="post">
       <div class="modal-header"><h2 class="modal-title" id="object-delete-title">Delete access object?</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
       <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><p>This permanently removes <code id="object-delete-name"></code>. Deletion is refused while any user, invitation or object still references it.</p></div>
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-danger">Delete object</button></div>
     </form></dialog>
 
-    <script src="{{ url_for('static', path='app.js') }}?v=20260901-10"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260901-11"></script>
   </body>
 </html>

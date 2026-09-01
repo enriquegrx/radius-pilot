@@ -787,6 +787,40 @@ def delete_access_object(name: str, request: Request, csrf: str = Form()):
     return mutate(request, csrf, "object-delete", {"name": name})
 
 
+@app.get("/access-objects/export")
+def export_access_objects(request: Request):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    try:
+        objects = call_helper("list", helper_payload(request, {}))["access_policy"]["objects"]
+    except HelperError as exc:
+        return redirect(request, str(exc), "danger", "users")
+    payload = [
+        {"name": item["name"], "description": item["description"], "rules": item["rules"]}
+        for item in objects
+    ]
+    return Response(
+        content=json.dumps({"access_objects": payload}, indent=2) + "\n",
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="access-objects.json"'},
+    )
+
+
+@app.post("/access-objects/import")
+def import_access_objects(request: Request, csrf: str = Form(), objects_json: str = Form()):
+    if len(objects_json) > 60000:
+        return redirect(request, "The import is too large.", "danger", "users")
+    try:
+        parsed = json.loads(objects_json)
+    except json.JSONDecodeError:
+        return redirect(request, "The import is not valid JSON.", "danger", "users")
+    objects = parsed.get("access_objects") if isinstance(parsed, dict) else parsed
+    if not isinstance(objects, list):
+        return redirect(request, "The import must be a list of access objects.", "danger", "users")
+    return mutate(request, csrf, "object-import", {"objects": objects})
+
+
 @app.post("/users/{username}/duo-check")
 def check_duo(username: str, request: Request, csrf: str = Form()):
     admin = require_admin(request)

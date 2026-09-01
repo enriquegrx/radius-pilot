@@ -3,6 +3,15 @@
   const escapeHtml = (value) => String(value || "").replace(/[&<>'"]/g, (character) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"})[character]);
   const localDateTime = (value) => value ? new Date(value).toISOString().slice(0, 16) : "";
 
+  const root = document.documentElement;
+  const applyTheme = (theme) => root.setAttribute("data-bs-theme", theme === "dark" ? "dark" : "light");
+  try { applyTheme(localStorage.getItem("console-theme") || "light"); } catch (_error) { /* storage unavailable */ }
+  document.getElementById("theme-toggle")?.addEventListener("click", () => {
+    const next = root.getAttribute("data-bs-theme") === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem("console-theme", next); } catch (_error) { /* storage unavailable */ }
+  });
+
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.querySelectorAll("[data-dialog-close]").forEach((button) => {
       button.addEventListener("click", () => dialog.close());
@@ -438,6 +447,42 @@
       objectDeleteForm.action = `/access-objects/${encode(button.dataset.name)}/delete`;
       objectDeleteName.textContent = button.dataset.name;
       objectDeleteModal.showModal();
+    });
+  });
+
+  const activitySearch = document.getElementById("activity-search");
+  const activityTables = [...document.querySelectorAll("[data-activity-table]")];
+  const applyActivityFilter = () => {
+    const query = activitySearch?.value.trim().toLowerCase() || "";
+    activityTables.forEach((table) => {
+      const rows = [...table.querySelectorAll("[data-activity-row]")];
+      const more = table.closest(".card").querySelector(".js-activity-more");
+      const expanded = more ? more.dataset.expanded === "true" : true;
+      let visible = 0;
+      rows.forEach((row, index) => {
+        const matches = !query || row.dataset.search.includes(query);
+        const withinPage = query ? true : expanded || index < 20;
+        row.hidden = !(matches && withinPage);
+        if (matches) visible += 1;
+      });
+      const empty = table.querySelector("[data-activity-empty]");
+      if (empty) empty.hidden = visible !== 0;
+      if (more) more.hidden = Boolean(query) || rows.length <= 20 || expanded;
+    });
+  };
+  activityTables.forEach((table) => {
+    table.closest(".card").querySelector(".js-activity-more")?.addEventListener("click", (event) => {
+      event.currentTarget.dataset.expanded = "true";
+      applyActivityFilter();
+    });
+  });
+  activitySearch?.addEventListener("input", applyActivityFilter);
+  document.querySelectorAll(".js-view-activity").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (activitySearch) activitySearch.value = button.dataset.username;
+      location.hash = "#activity";
+      applyActivityFilter();
+      activitySearch?.focus();
     });
   });
 

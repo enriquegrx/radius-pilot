@@ -249,6 +249,42 @@ def test_access_object_endpoints_forward_payloads(monkeypatch) -> None:
     assert mutations[1][1]["name"] == "core-dns"
 
 
+def test_access_object_export_and_import(monkeypatch) -> None:
+    imports = []
+
+    def recording_helper(operation: str, payload=None):
+        if operation == "object-import":
+            imports.append(payload)
+            return {"ok": True, "imported": len(payload["objects"])}
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", recording_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    export = client.get("/access-objects/export")
+    assert export.status_code == 200
+    assert export.headers["content-disposition"].endswith('filename="access-objects.json"')
+    exported = export.json()["access_objects"]
+    assert exported[0]["name"] == "core-dns"
+    assert "used_by" not in exported[0]
+
+    imported = client.post(
+        "/access-objects/import",
+        data={"csrf": csrf, "objects_json": export.text},
+        follow_redirects=False,
+    )
+    assert imported.status_code == 303
+    assert imports[0]["objects"][0]["name"] == "core-dns"
+
+
 def test_access_policy_endpoint_forwards_valid_rules(monkeypatch) -> None:
     mutations = []
 

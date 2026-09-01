@@ -15,6 +15,8 @@ import pwd
 import re
 import secrets
 import shutil
+import smtplib
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -22,7 +24,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
@@ -63,6 +66,7 @@ OPERATIONS = {
     "set-expiry",
     "object-set",
     "object-delete",
+    "object-import",
     "delete",
     "sync",
     "reconcile",
@@ -1122,6 +1126,57 @@ class Store:
             data["version"] = 3
             self._commit(data)
 
+    def import_objects(self, payload: dict[str, Any]) -> int:
+        incoming = payload.get("objects")
+        if not isinstance(incoming, list) or not incoming:
+            raise AdminError("Provide a non-empty list of access objects to import.")
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = self.load()
+            merged = {item["name"]: item for item in data.get("access_objects", [])}
+            names: list[str] = []
+            for raw in incoming:
+                if not isinstance(raw, dict):
+                    raise AdminError("Each imported object must be an object.")
+                try:
+                    name = clean_object_name(raw.get("name"))
+                except AccessPolicyError as exc:
+                    raise AdminError(str(exc)) from exc
+                merged[name] = {
+                    "name": name,
+                    "description": raw.get("description"),
+                    "rules": raw.get("rules"),
+                }
+                names.append(name)
+            try:
+                objects = clean_access_objects(
+                    list(merged.values()), destination_allowlist=self.policy_destinations
+                )
+            except AccessPolicyError as exc:
+                raise AdminError(str(exc)) from exc
+            data["access_objects"] = list(objects.values())
+            for user in data["users"]:
+                try:
+                    user["access_policy"] = clean_access_policy(
+                        user["access_policy"],
+                        destination_allowlist=self.policy_destinations,
+                        objects=objects,
+                    )
+                    cisco_avpairs(
+                        user["access_policy"],
+                        destination_allowlist=self.policy_destinations,
+                        objects=objects,
+                    )
+                except AccessPolicyError as exc:
+                    raise AdminError(
+                        f"The import breaks the policy of '{user['username']}': {exc}"
+                    ) from exc
+            self._load_invitations(objects=objects)
+            data["version"] = 3
+            self._commit(data)
+        return len(names)
+
     def migrate_passwords(self, username: object = None) -> list[str]:
         """Replace legacy clear-text VPN credentials with MS-CHAPv2 NT hashes."""
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1216,6 +1271,7 @@ class Store:
                 user["duo_bypass_reason"] = ""
                 user["updated_at"] = now()
                 changes.append(f"expired Duo bypass {user['username']}")
+        changes.extend(self._expiry_warnings(data))
         expected_authorize = self._render(data)
         managed_files_changed = expected_authorize.encode() != self.authorize_path.read_bytes()
         if changes or managed_files_changed:
@@ -1225,6 +1281,74 @@ class Store:
         changes.extend(self._rotate_audit())
         changes.extend(self._prune_backups())
         return changes
+
+    def _send_admin_email(self, recipient: str, subject: str, body: str) -> None:
+        host = runtime_setting("RADIUS_ADMIN_SMTP_HOST", "").strip()
+        try:
+            port = int(runtime_setting("RADIUS_ADMIN_SMTP_PORT", "587"))
+        except ValueError:
+            port = 587
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = runtime_setting(
+            "RADIUS_ADMIN_SMTP_FROM", "RadiusPilot <radiuspilot@your-domain.com>"
+        )
+        message["To"] = recipient
+        message.set_content(body)
+        with smtplib.SMTP(host, port, timeout=10) as smtp:
+            if runtime_setting("RADIUS_ADMIN_SMTP_STARTTLS", "1") == "1":
+                smtp.starttls(context=ssl.create_default_context())
+            smtp_user = runtime_setting("RADIUS_ADMIN_SMTP_USERNAME", "")
+            if smtp_user:
+                smtp.login(smtp_user, runtime_setting("RADIUS_ADMIN_SMTP_PASSWORD", ""))
+            smtp.send_message(message)
+
+    def _expiry_warnings(self, data: dict[str, Any]) -> list[str]:
+        recipient = runtime_setting("RADIUS_ADMIN_ADMIN_EMAIL", "").strip()
+        host = runtime_setting("RADIUS_ADMIN_SMTP_HOST", "").strip()
+        if not recipient or not host:
+            return []
+        try:
+            days = int(runtime_setting("RADIUS_ADMIN_EXPIRY_WARNING_DAYS", "7"))
+        except ValueError:
+            days = 7
+        horizon = datetime.now(UTC) + timedelta(days=max(1, days))
+        due = []
+        for user in data["users"]:
+            if not self._effective_enabled(user):
+                continue
+            raw = user.get("expires_at")
+            if not raw or user.get("expiry_warned") == raw:
+                continue
+            try:
+                expires = datetime.fromisoformat(raw)
+            except (TypeError, ValueError):
+                continue
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=UTC)
+            if expires <= horizon:
+                due.append(user)
+        if not due:
+            return []
+        lines = [
+            f"{len(due)} VPN account(s) expire within {days} day(s):",
+            "",
+            *(f"- {user['username']} expires {user['expires_at'][:16].replace('T', ' ')} UTC"
+              for user in due),
+            "",
+            "Renew or remove them in the RadiusPilot console.",
+        ]
+        try:
+            self._send_admin_email(
+                recipient, "RadiusPilot: VPN accounts expiring soon", "\n".join(lines)
+            )
+        except (OSError, smtplib.SMTPException):
+            return []
+        stamp = now()
+        for user in due:
+            user["expiry_warned"] = user["expires_at"]
+            user["updated_at"] = stamp
+        return [f"warned about {len(due)} expiring account(s)"]
 
     def _rotate_audit(self) -> list[str]:
         # Maintenance must never take authentication down: swallow I/O errors.
@@ -2172,6 +2296,8 @@ def main() -> int:
         elif args.operation in {"object-set", "object-delete"}:
             store.mutate_objects(args.operation, payload)
             result = {}
+        elif args.operation == "object-import":
+            result = {"imported": store.import_objects(payload)}
         else:
             store.mutate(args.operation, payload)
             result = {}
@@ -2185,6 +2311,7 @@ def main() -> int:
             "set-expiry",
             "object-set",
             "object-delete",
+            "object-import",
             "delete",
             "restore",
             "set-admin-password",

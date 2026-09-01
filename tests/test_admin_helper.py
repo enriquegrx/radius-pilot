@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -814,6 +815,89 @@ def test_reconcile_prunes_only_helper_backups(store: Store) -> None:
     assert "deploy-20260901-165942" in remaining
     assert "20260101T000000000000Z" not in remaining
     assert "20260101T000000000044Z" in remaining
+
+
+def test_import_objects_upserts_and_validates(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "web",
+            "rules": [{"destination": "192.168.50.20", "protocol": "tcp", "ports": "80"}],
+        },
+    )
+    count = store.import_objects(
+        {
+            "objects": [
+                {
+                    "name": "web",
+                    "description": "updated",
+                    "rules": [
+                        {"destination": "192.168.50.20", "protocol": "tcp", "ports": "443"}
+                    ],
+                },
+                {
+                    "name": "dns",
+                    "rules": [
+                        {"destination": "192.168.50.53", "protocol": "udp", "ports": "53"}
+                    ],
+                },
+            ]
+        }
+    )
+    assert count == 2
+    objects = {o["name"]: o for o in store.public_list()["access_policy"]["objects"]}
+    assert set(objects) == {"web", "dns"}
+    assert objects["web"]["description"] == "updated"
+
+
+def test_import_objects_rejected_when_it_breaks_a_user(store: Store) -> None:
+    enable_custom_access(store)
+    store.mutate_objects(
+        "object-set",
+        {
+            "name": "svc",
+            "rules": [{"destination": "192.168.50.20", "protocol": "tcp", "ports": "443"}],
+        },
+    )
+    store.mutate(
+        "set-access-policy",
+        {
+            "username": "vpn-test-user",
+            "access_policy": {"mode": "custom", "rules": [{"object": "svc"}]},
+        },
+    )
+    oversized = [
+        {"destination": f"192.168.50.{host}", "protocol": "tcp", "ports": "80,443,8443"}
+        for host in range(20, 41)
+    ]
+    with pytest.raises(AdminError, match="vpn-test-user"):
+        store.import_objects({"objects": [{"name": "svc", "rules": oversized}]})
+
+
+def test_reconcile_emails_expiring_accounts_once(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADIUS_ADMIN_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("RADIUS_ADMIN_ADMIN_EMAIL", "ops@example.test")
+    monkeypatch.setenv("RADIUS_ADMIN_EXPIRY_WARNING_DAYS", "7")
+    sent = []
+    store._send_admin_email = (  # type: ignore[method-assign]
+        lambda recipient, subject, body: sent.append((recipient, subject, body))
+    )
+    data = json.loads(store.state_path.read_text())
+    soon = (datetime.now(UTC) + timedelta(days=3)).isoformat(timespec="seconds")
+    data["users"][0]["expires_at"] = soon
+    store.state_path.write_text(json.dumps(data))
+
+    changes = store.reconcile()
+    assert any("warned about 1 expiring account" in c for c in changes)
+    assert len(sent) == 1
+    assert sent[0][0] == "ops@example.test"
+    assert "vpn-test-user" in sent[0][2]
+    # A second reconcile must not re-warn the same expiry.
+    assert not any("warned about" in c for c in store.reconcile())
+    assert len(sent) == 1
 
 
 def test_public_list_reports_readiness_flags(store: Store) -> None:
