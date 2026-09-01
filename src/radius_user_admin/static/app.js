@@ -72,6 +72,7 @@
       event.preventDefault();
       toggleRow(row);
     });
+    row.querySelector(".js-expand")?.addEventListener("click", () => toggleRow(row));
   });
   const applyFilters = () => {
     const query = search?.value.trim().toLowerCase() || "";
@@ -328,22 +329,11 @@
       requestAnimationFrame(() => document.getElementById("action-input")?.focus());
     };
 
-    document.querySelectorAll(".js-manage").forEach((button) => {
+    document.querySelectorAll("[data-row-action]").forEach((button) => {
       button.addEventListener("click", () => {
-        const data = {...button.dataset};
-        title.textContent = `Manage ${data.user}`;
-        description.textContent = "Choose an account action.";
-        submit.hidden = true;
-        cancel.textContent = "Close";
-        form.removeAttribute("action");
-        const statusLabel = data.enabled === "true" ? "Block user" : "Unblock user";
-        const duoLabel = data.duoRequired === "true" ? "Use password only" : "Require Duo Push";
-        const panelLabel = data.panelAccess === "true" ? "Revoke panel access" : "Grant panel access";
-        const enrollmentLabel = data.duoEnrollmentActive === "true" ? "View Duo enrollment" : "Enroll in Duo";
-        const enrollmentHint = data.duoEnrollmentActive === "true" ? "Open the active QR and mobile link" : "Create a seven-day QR activation";
-        const credentialAction = data.credentialScheme === "legacy-cleartext" ? `<button type="button" class="admin-action" data-modal-action="credential">Protect stored password<span>Migrate to an MS-CHAPv2-compatible NT hash</span></button>` : "";
-        field.innerHTML = `<div class="admin-action-grid"><button type="button" class="admin-action" data-modal-action="access">Network access<span>${escapeHtml(data.accessSummary || "Full access")}</span></button><button type="button" class="admin-action" data-modal-action="rename">Rename user<span>Keep RADIUS and Duo aligned</span></button><button type="button" class="admin-action" data-modal-action="password">Reset VPN password<span>Generate or enter a new secret</span></button>${credentialAction}<button type="button" class="admin-action" data-modal-action="duo-enroll">${enrollmentLabel}<span>${enrollmentHint}</span></button><button type="button" class="admin-action" data-modal-action="duo">${duoLabel}<span>Change VPN second-factor enforcement</span></button><button type="button" class="admin-action" data-modal-action="panel">${panelLabel}<span>Separate console credential + Duo</span></button><button type="button" class="admin-action" data-modal-action="expiry">Set account expiry<span>Automatic access cutoff</span></button><button type="button" class="admin-action" data-modal-action="duo-check">Check Duo readiness<span>Enrollment and Push capability</span></button><button type="button" class="admin-action" data-modal-action="status">${statusLabel}<span>Change VPN access immediately</span></button><button type="button" class="admin-action admin-action-danger" data-modal-action="delete">Delete user<span>Remove the local credential</span></button></div>`;
-        field.querySelectorAll("[data-modal-action]").forEach((actionButton) => actionButton.addEventListener("click", () => configureAction(actionButton.dataset.modalAction, data)));
+        const row = button.closest(".user-detail-row")?.previousElementSibling;
+        if (!row || !row.matches("[data-user-row]")) return;
+        configureAction(button.dataset.rowAction, {...row.dataset});
         modal.showModal();
       });
     });

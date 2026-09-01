@@ -110,7 +110,8 @@ def test_dashboard_renders_user_without_password(monkeypatch) -> None:
     assert "Authentication healthy" in response.text
     assert "Duo Push" in response.text
     assert "long-enough-password" not in response.text
-    assert "js-manage" in response.text
+    assert "data-row-action" in response.text
+    assert "js-manage" not in response.text
     assert "dropdown-menu" not in response.text
 
 
