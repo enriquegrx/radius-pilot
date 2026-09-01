@@ -30,7 +30,7 @@ LOCAL_ZONE = ZoneInfo("Europe/Madrid")
 LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
 LOGIN_LOCKED_UNTIL: dict[str, float] = {}
 
-app = FastAPI(title="Radius User Admin", docs_url=None, redoc_url=None)
+app = FastAPI(title="RadiusPilot", docs_url=None, redoc_url=None)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["radius.your-domain.com", "127.0.0.1", "localhost", "testserver"],
@@ -594,7 +594,7 @@ def diagnostics(request: Request):
     health = data["health"]
     certificate = health["certificate"]
     lines = [
-        "Radius User Admin diagnostic",
+        "RadiusPilot diagnostic",
         f"Generated: {datetime.now(UTC).isoformat(timespec='seconds')}",
         f"FreeRADIUS active: {health['active']}",
         f"FreeRADIUS configuration valid: {health['config_valid']}",

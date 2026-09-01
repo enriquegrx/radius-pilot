@@ -1,4 +1,4 @@
-# Radius User Admin 🛡️
+# RadiusPilot 🛡️
 
 A small web console for the VPN accounts authenticated by FreeRADIUS at Example Organization.
 It covers the jobs we actually need day to day: see who has access, add an
