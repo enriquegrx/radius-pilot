@@ -14,6 +14,20 @@ is no WAN NAT, Cloudflare Tunnel, or public admin path.
 - Lists enabled and blocked users without exposing passwords.
 - Creates, renames, blocks, unblocks, and deletes accounts.
 - Switches each enabled account between password plus Duo Push and password only.
+- Protects the console with a separate scrypt-hashed administrator password,
+  Duo Push, a 30-minute idle timeout, CSRF protection, and login rate limiting.
+- Assigns panel access as an explicit per-user role. A panel administrator keeps
+  a separate console password, must be Duo-ready, and may not reuse the VPN
+  password. The final panel administrator cannot be revoked or deleted.
+- Records administrative changes and recent VPN authentication results without
+  storing passwords in the audit trail.
+- Supports account expirations and time-limited password-only exceptions; a
+  systemd timer enforces both automatically every five minutes.
+- Checks Duo enrollment and Push capability before enabling Duo for an account.
+- Shows service, certificate, disk, and backup health, and exports redacted
+  diagnostics and audit CSV files.
+- Lists configuration backups and restores them through the same validation and
+  rollback path used for ordinary changes.
 - Resets a password without ever showing the previous one.
 - Refuses to block or delete the final enabled account.
 - Validates the full FreeRADIUS configuration before restarting the service.
@@ -48,7 +62,15 @@ The helper maintains:
   active users consumed by FreeRADIUS.
 - `/opt/duoauthproxy/conf/authproxy.cfg` — retains its hand-written settings and
   receives only a marked, generated username-exemption block.
+- `/var/lib/radius-user-admin/admins.json` — root-only scrypt verifier for the
+  console administrator; it does not contain the clear-text password.
+- `/var/lib/radius-user-admin/audit.jsonl` — append-only administrative audit
+  events with actor and source address, never credentials.
 - `/var/backups/radius-user-admin/` — dated snapshots before every mutation.
+
+Authentication history is read from Duo Authentication Proxy's structured
+`authevents.log`. Only the timestamp, username, source address, stage, and result
+are returned to the web process.
 
 The interface uses the open-source [Tabler](https://tabler.io/) design system,
 vendored locally under its MIT license.
@@ -77,3 +99,7 @@ systemd unit, a dedicated service user, Nginx with a Let's Encrypt certificate,
 and a single sudoers entry. Do not bind Uvicorn to a LAN address or add public
 NAT. Certificate issuance and renewal use DNS-01 on `pki01`; the deploy hook
 copies the renewed files to `radius01`, tests Nginx, and reloads it.
+
+`radius-user-admin-reconcile.timer` runs every five minutes. It blocks expired
+accounts and restores Duo enforcement when a temporary password-only exception
+expires. No service restart occurs when there is nothing to change.

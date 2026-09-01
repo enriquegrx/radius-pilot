@@ -56,6 +56,10 @@ port=1812
         backup_dir=tmp_path / "backups",
         lock_path=tmp_path / "lock",
         duo_config_path=duo_config,
+        admin_path=tmp_path / "state/admins.json",
+        audit_path=tmp_path / "state/audit.jsonl",
+        auth_events_path=tmp_path / "authevents.log",
+        certificate_path=tmp_path / "fullchain.pem",
         runner=Runner(),
     )
     result.bootstrap()
@@ -108,6 +112,7 @@ def test_validation_failure_rolls_back_both_files(
                 "username": "quique",
                 "password": "a-safe-password-2026",
                 "duo_required": False,
+                "duo_bypass_reason": "Temporary support access",
             },
         )
     assert store.state_path.read_bytes() == old_state
@@ -122,6 +127,7 @@ def test_password_only_user_gets_managed_duo_exemption(store: Store) -> None:
             "username": "quique",
             "password": "a-safe-password-2026",
             "duo_required": False,
+            "duo_bypass_reason": "Temporary support access",
         },
     )
     config = store.duo_config_path.read_text()
@@ -141,6 +147,7 @@ def test_blocked_user_is_not_exempted_from_duo(store: Store) -> None:
             "username": "quique",
             "password": "a-safe-password-2026",
             "duo_required": False,
+            "duo_bypass_reason": "Temporary support access",
         },
     )
     store.mutate("set-enabled", {"username": "quique", "enabled": False})
@@ -153,7 +160,14 @@ def test_unmanaged_duo_exemption_is_rejected(store: Store) -> None:
     )
     store.duo_config_path.write_text(config)
     with pytest.raises(AdminError, match="manual review"):
-        store.mutate("set-duo", {"username": "vpn-test-user", "duo_required": False})
+        store.mutate(
+            "set-duo",
+            {
+                "username": "vpn-test-user",
+                "duo_required": False,
+                "duo_bypass_reason": "Temporary support access",
+            },
+        )
 
 
 @pytest.mark.parametrize("username", ["space user", "../root", "", "x" * 65])
@@ -164,3 +178,114 @@ def test_username_policy_rejects_unsafe_values(username: str) -> None:
 
 def test_username_is_normalized_to_lowercase() -> None:
     assert admin_helper.clean_username("QUIQUE") == "quique"
+
+
+def test_admin_password_is_hashed_and_authenticates(store: Store) -> None:
+    store.duo_authenticate = lambda _username: True  # type: ignore[method-assign]
+    store.bootstrap_admin("console-admin", "a-strong-console-password-2026")
+    content = store.admin_path.read_text()
+    assert "a-strong-console-password-2026" not in content
+    assert store.authenticate_admin("console-admin", "a-strong-console-password-2026") is True
+    assert store.authenticate_admin("console-admin", "wrong-password") is False
+
+
+def test_reconcile_expires_duo_bypass(store: Store) -> None:
+    store.mutate(
+        "create",
+        {
+            "username": "quique",
+            "password": "a-safe-password-2026",
+            "duo_required": False,
+            "duo_bypass_reason": "Temporary support access",
+        },
+    )
+    data = store.load()
+    target = next(user for user in data["users"] if user["username"] == "quique")
+    target["duo_bypass_until"] = "2020-01-01T00:00:00+00:00"
+    store._atomic_json(data)
+    changes = store.reconcile()
+    target = next(user for user in store.load()["users"] if user["username"] == "quique")
+    assert changes == ["expired Duo bypass quique"]
+    assert target["duo_required"] is True
+    assert "exempt_username_1=quique" not in store.duo_config_path.read_text()
+
+
+def test_audit_never_records_password(store: Store) -> None:
+    store.record_audit(
+        actor="admin",
+        source_ip="192.0.2.10",
+        action="reset-password",
+        target="quique",
+        detail="Password changed",
+    )
+    content = store.audit_path.read_text()
+    assert "a-safe-password-2026" not in content
+    assert store.audit_events()[0]["target"] == "quique"
+
+
+def test_last_authentication_is_sanitized(store: Store) -> None:
+    store.auth_events_path.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-09-01T05:45:29Z",
+                "username": "vpn-test-user",
+                "status": "Allow",
+                "auth_stage": "Secondary authentication",
+                "client_ip": "192.0.2.10",
+                "msg": "Success. Logging you in...",
+                "secret": "must-not-be-returned",
+            }
+        )
+        + "\n"
+    )
+    event = store.last_authentication()["vpn-test-user"]
+    assert event["status"] == "Allow"
+    assert "secret" not in event
+
+
+def test_panel_access_uses_separate_credential_and_preserves_final_admin(store: Store) -> None:
+    store.bootstrap_admin("vpn-test-user", "initial-console-password-2026")
+    store.duo_authenticate = lambda _username: True  # type: ignore[method-assign]
+    store.duo_check = lambda _username: {  # type: ignore[method-assign]
+        "result": "auth",
+        "push_capable": True,
+    }
+    store.mutate(
+        "create",
+        {
+            "username": "quique",
+            "password": "a-safe-vpn-password-2026",
+            "duo_required": True,
+            "panel_access": True,
+            "panel_password": "a-distinct-console-password-2026",
+        },
+    )
+    public = {user["username"]: user for user in store.public_list()["users"]}
+    assert public["quique"]["panel_access"] is True
+    assert store.authenticate_admin("quique", "a-distinct-console-password-2026") is True
+    with pytest.raises(AdminError, match="Revoke panel access"):
+        store.mutate("delete", {"username": "quique"})
+
+    store.set_panel_access("quique", False)
+    assert "quique" not in store.panel_admin_usernames()
+    with pytest.raises(AdminError, match="final administrator"):
+        store.set_panel_access("vpn-test-user", False)
+
+
+def test_panel_password_must_differ_from_vpn_password(store: Store) -> None:
+    store.bootstrap_admin("vpn-test-user", "initial-console-password-2026")
+    store.duo_check = lambda _username: {  # type: ignore[method-assign]
+        "result": "auth",
+        "push_capable": True,
+    }
+    with pytest.raises(AdminError, match="must differ"):
+        store.mutate(
+            "create",
+            {
+                "username": "quique",
+                "password": "same-password-for-both-2026",
+                "duo_required": True,
+                "panel_access": True,
+                "panel_password": "same-password-for-both-2026",
+            },
+        )

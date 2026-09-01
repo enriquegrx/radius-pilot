@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Sign in · Radius User Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-5">
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <div class="login-brand"><div class="brand-mark" aria-hidden="true">R</div><div><h1>Radius User Admin</h1><p>Example Organization · VPN identity control</p></div></div>
+      <div class="card login-card"><div class="card-body p-4">
+        <h2 class="h2 mb-2">Administrator sign-in</h2>
+        <p class="text-secondary mb-4">Use the console administrator account, then approve the Duo Push. VPN credentials are not accepted here.</p>
+        {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+        <form method="post" action="/login"><input type="hidden" name="csrf" value="{{ csrf }}">
+          <div class="mb-3"><label class="form-label" for="username">Username</label><input class="form-control" id="username" name="username" required autocomplete="username" autofocus></div>
+          <div class="mb-4"><label class="form-label" for="password">Password</label><input class="form-control" id="password" name="password" type="password" required autocomplete="current-password"></div>
+          <button class="btn btn-primary w-100">Sign in with Duo</button>
+        </form>
+      </div></div>
+      <p class="login-note">Internal access only · Sessions expire after 30 minutes of inactivity</p>
+    </main>
+  </body>
+</html>

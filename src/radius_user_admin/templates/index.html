@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex,nofollow">
     <title>Radius User Admin</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-3">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-3">
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-5">
   </head>
   <body>
     <div class="page">
@@ -14,90 +14,109 @@
         <div class="container-xl">
           <div class="d-flex align-items-center gap-3">
             <div class="brand-mark" aria-hidden="true">R</div>
-            <div>
-              <div class="navbar-brand m-0 p-0">Radius User Admin</div>
-              <div class="text-secondary small">Example Organization · VPN identity control</div>
-            </div>
+            <div><div class="navbar-brand m-0 p-0">Radius User Admin</div><div class="text-secondary small">Example Organization · VPN identity control</div></div>
           </div>
-          <div class="d-flex align-items-center gap-2">
-            {% if health.active and health.config_valid and health.duo_active %}
-              <span class="status status-green"><span class="status-dot status-dot-animated"></span>Authentication healthy</span>
+          <div class="header-actions">
+            {% if health.active and health.config_valid and health.duo_active and health.nginx_active %}
+              <a class="status status-green" href="#system"><span class="status-dot status-dot-animated"></span>Authentication healthy</a>
             {% else %}
-              <span class="status status-red"><span class="status-dot"></span>Service needs attention</span>
+              <a class="status status-red" href="#system"><span class="status-dot"></span>Service needs attention</a>
             {% endif %}
-            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#create-modal">Add user</button>
+            <span class="admin-identity">{{ admin }}</span>
+            <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost-secondary btn-sm">Sign out</button></form>
+            <button class="btn btn-primary" type="button" data-dialog-open="create-modal">Add user</button>
           </div>
         </div>
       </header>
 
       <main class="page-wrapper">
-        <div class="page-body">
-          <div class="container-xl">
-            {% if message %}<div class="alert alert-{{ level }} alert-dismissible" role="alert">{{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>{% endif %}
-            {% if error %}<div class="alert alert-danger" role="alert"><strong>Cannot load users.</strong> {{ error }}</div>{% endif %}
+        <div class="page-body"><div class="container-xl">
+          {% if message %}<div class="alert alert-{{ level }} alert-dismissible" role="alert">{{ message }}</div>{% endif %}
+          {% if error %}<div class="alert alert-danger" role="alert"><strong>Cannot load the console.</strong> {{ error }}</div>{% endif %}
 
-            <div class="row row-cards mb-4">
-              <div class="col-sm-6 col-lg-4">
-                <div class="card metric-card"><div class="card-body"><div class="subheader">Enabled users</div><div class="h1 mb-0">{{ enabled_count }}</div><div class="text-secondary mt-1">Allowed to authenticate</div></div></div>
-              </div>
-              <div class="col-sm-6 col-lg-4">
-                <div class="card metric-card"><div class="card-body"><div class="subheader">Blocked users</div><div class="h1 mb-0">{{ blocked_count }}</div><div class="text-secondary mt-1">Retained, but denied before Duo</div></div></div>
-              </div>
-              <div class="col-sm-12 col-lg-4">
-                <div class="card metric-card"><div class="card-body"><div class="subheader">Configuration</div><div class="h2 mb-0">{% if health.config_valid %}Validated{% else %}Invalid{% endif %}</div><div class="text-secondary mt-1">Every change is checked and reversible</div></div></div>
-              </div>
-            </div>
+          <nav class="section-nav" aria-label="Console sections">
+            <a href="#users">Users</a><a href="#activity">Activity</a><a href="#system">System</a>
+          </nav>
 
-            <div class="card user-card">
-              <div class="card-header">
-                <div>
-                  <h2 class="card-title mb-1">VPN users</h2>
-                  <div class="text-secondary">The username must exactly match the Duo account.</div>
-                </div>
-              </div>
-              <div class="table-responsive">
-                <table class="table table-vcenter card-table">
-                  <thead><tr><th>User</th><th>Status</th><th>Authentication</th><th>Last changed</th><th class="w-1"><span class="visually-hidden">Actions</span></th></tr></thead>
-                  <tbody>
-                    {% for user in users %}
-                    <tr>
-                      <td><div class="d-flex align-items-center gap-3"><span class="avatar avatar-sm user-avatar">{{ user.username[:2] | upper }}</span><div><div class="fw-semibold">{{ user.username }}</div><div class="text-secondary small">VPN account</div></div></div></td>
-                      <td>{% if user.enabled %}<span class="badge bg-green-lt">Enabled</span>{% else %}<span class="badge bg-red-lt">Blocked</span>{% endif %}</td>
-                      <td>{% if user.duo_required %}<span class="badge bg-blue-lt">Duo Push</span>{% else %}<span class="badge bg-yellow-lt">Password only</span>{% endif %}</td>
-                      <td class="text-secondary">{{ user.updated_at[:10] }} {{ user.updated_at[11:16] }} UTC</td>
-                      <td>
-                        <button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}">Manage</button>
-                      </td>
-                    </tr>
-                    {% else %}
-                    <tr><td colspan="5"><div class="empty py-5"><p class="empty-title">No users available</p><p class="empty-subtitle text-secondary">Check the helper status or add the first account during bootstrap.</p></div></td></tr>
-                    {% endfor %}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          <div class="metric-grid">
+            <div class="card metric-card"><div class="card-body"><div class="subheader">Enabled</div><div class="h1 mb-0">{{ enabled_count }}</div><div class="text-secondary mt-1">Allowed to authenticate</div></div></div>
+            <div class="card metric-card"><div class="card-body"><div class="subheader">Duo protected</div><div class="h1 mb-0">{{ duo_count }}</div><div class="text-secondary mt-1">Password plus Push</div></div></div>
+            <div class="card metric-card {% if password_only_count %}metric-warning{% endif %}"><div class="card-body"><div class="subheader">Password only</div><div class="h1 mb-0">{{ password_only_count }}</div><div class="text-secondary mt-1">Temporary VPN exceptions</div></div></div>
+            <div class="card metric-card"><div class="card-body"><div class="subheader">Blocked</div><div class="h1 mb-0">{{ blocked_count }}</div><div class="text-secondary mt-1">Denied before Duo</div></div></div>
           </div>
-        </div>
+
+          <section id="users" class="console-section">
+            <div class="card user-card">
+              <div class="card-header user-card-header">
+                <div><h2 class="card-title mb-1">VPN users</h2><div class="text-secondary">Passwords are never displayed after creation.</div></div>
+                <div class="user-tools"><label class="visually-hidden" for="user-search">Search users</label><input class="form-control" id="user-search" type="search" placeholder="Search users…"><label class="visually-hidden" for="user-filter">Filter users</label><select class="form-select" id="user-filter"><option value="all">All users</option><option value="enabled">Enabled</option><option value="blocked">Blocked</option><option value="duo">Duo Push</option><option value="password">Password only</option></select></div>
+              </div>
+              <div class="table-responsive"><table class="table table-vcenter card-table" id="users-table">
+                <thead><tr><th>User</th><th>Access</th><th>Authentication</th><th>Last sign-in</th><th>Expires</th><th class="w-1"><span class="visually-hidden">Actions</span></th></tr></thead>
+                <tbody>
+                  {% for user in users %}
+                  <tr data-user-row data-username="{{ user.username }}" data-filter-status="{{ 'enabled' if user.effective_enabled else 'blocked' }}" data-filter-duo="{{ 'duo' if user.effective_duo_required else 'password' }}">
+                    <td><div class="d-flex align-items-center gap-3"><span class="avatar avatar-sm user-avatar">{{ user.username[:2] | upper }}</span><div><div class="fw-semibold">{{ user.username }}</div><div class="text-secondary small">{% if user.panel_access %}Panel administrator · {% endif %}Updated {{ user.updated_at[:10] }}</div></div></div></td>
+                    <td>{% if user.effective_enabled %}<span class="badge bg-green-lt">Enabled</span>{% else %}<span class="badge bg-red-lt">Blocked</span>{% endif %}</td>
+                    <td>{% if user.effective_duo_required %}<span class="badge bg-blue-lt">Duo Push</span>{% else %}<span class="badge bg-yellow-lt">Password only</span>{% if user.duo_bypass_reason %}<div class="small text-secondary mt-1" title="{{ user.duo_bypass_reason }}">{{ user.duo_bypass_reason[:28] }}{% if user.duo_bypass_reason|length > 28 %}…{% endif %}</div>{% endif %}{% endif %}</td>
+                    <td class="text-secondary">{% if user.last_auth %}<span class="auth-status auth-{{ user.last_auth.status | lower }}">{{ user.last_auth.status }}</span><div class="small">{{ user.last_auth.timestamp[:16] | replace('T', ' ') }} UTC</div>{% else %}Never recorded{% endif %}</td>
+                    <td class="text-secondary">{% if user.expires_at %}{{ user.expires_at[:16] | replace('T', ' ') }} UTC{% else %}No expiry{% endif %}</td>
+                    <td><button type="button" class="btn btn-ghost-secondary btn-sm js-manage" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}" data-panel-access="{{ 'true' if user.panel_access else 'false' }}" data-expires-at="{{ user.expires_at or '' }}" data-bypass-until="{{ user.duo_bypass_until or '' }}" data-bypass-reason="{{ user.duo_bypass_reason }}">Manage</button></td>
+                  </tr>
+                  {% else %}<tr><td colspan="6"><div class="empty py-5"><p class="empty-title">No users available</p></div></td></tr>{% endfor %}
+                  <tr id="no-filter-results" hidden><td colspan="6" class="text-center text-secondary py-5">No users match this search.</td></tr>
+                </tbody>
+              </table></div>
+            </div>
+          </section>
+
+          <section id="activity" class="console-section">
+            <div class="section-heading"><div><h2>Activity</h2><p>Administrative changes and recent VPN authentication events.</p></div><a class="btn btn-outline-secondary" href="/audit.csv">Export audit CSV</a></div>
+            <div class="activity-grid">
+              <div class="card"><div class="card-header"><h3 class="card-title">Administrative audit</h3></div><div class="table-responsive"><table class="table table-sm card-table"><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th></tr></thead><tbody>{% for event in audit_events[:20] %}<tr><td class="text-secondary">{{ event.timestamp[:16] | replace('T', ' ') }}</td><td>{{ event.actor }}<div class="small text-secondary">{{ event.source_ip }}</div></td><td>{{ event.action }}</td><td>{{ event.target or '—' }}</td><td><span class="badge {{ 'bg-green-lt' if event.result == 'success' else 'bg-red-lt' }}">{{ event.result }}</span></td></tr>{% else %}<tr><td colspan="5" class="text-secondary py-4">No administrative events recorded yet.</td></tr>{% endfor %}</tbody></table></div></div>
+              <div class="card"><div class="card-header"><h3 class="card-title">VPN authentication</h3></div><div class="table-responsive"><table class="table table-sm card-table"><thead><tr><th>When</th><th>User</th><th>Stage</th><th>Result</th></tr></thead><tbody>{% for event in auth_events[:20] %}<tr><td class="text-secondary">{{ event.timestamp[:16] | replace('T', ' ') }}</td><td>{{ event.username }}{% if event.client_ip %}<div class="small text-secondary">{{ event.client_ip }}</div>{% endif %}</td><td>{{ event.stage }}</td><td><span class="badge {{ 'bg-green-lt' if event.status == 'Allow' else 'bg-red-lt' }}">{{ event.status }}</span></td></tr>{% else %}<tr><td colspan="4" class="text-secondary py-4">No authentication events recorded.</td></tr>{% endfor %}</tbody></table></div></div>
+            </div>
+          </section>
+
+          <section id="system" class="console-section">
+            <div class="section-heading"><div><h2>System</h2><p>Live health, certificate lifetime, diagnostics and reversible backups.</p></div><a class="btn btn-outline-secondary" href="/diagnostics.txt">Download redacted diagnostic</a></div>
+            <div class="status-grid">
+              {% for label, active in [('FreeRADIUS', health.active), ('Duo Authentication Proxy', health.duo_active), ('Nginx HTTPS', health.nginx_active), ('Configuration', health.config_valid)] %}<div class="card service-card"><div class="card-body"><span class="status-dot {{ 'bg-green' if active else 'bg-red' }}"></span><div><strong>{{ label }}</strong><div class="text-secondary small">{{ 'Healthy' if active else 'Needs attention' }}</div></div></div></div>{% endfor %}
+              <div class="card service-card"><div class="card-body"><span class="status-dot {{ 'bg-green' if health.certificate.valid else 'bg-red' }}"></span><div><strong>HTTPS certificate</strong><div class="text-secondary small">{% if health.certificate.days_remaining is not none %}{{ health.certificate.days_remaining }} days remaining{% else %}Status unavailable{% endif %}</div></div></div></div>
+              <div class="card service-card"><div class="card-body"><span class="status-dot {{ 'bg-green' if health.disk_free_mb is not none and health.disk_free_mb > 1024 else 'bg-yellow' }}"></span><div><strong>Disk space</strong><div class="text-secondary small">{% if health.disk_free_mb is not none %}{{ health.disk_free_mb }} MiB free{% else %}Status unavailable{% endif %}</div></div></div></div>
+            </div>
+            <div class="card mt-3"><div class="card-header"><div><h3 class="card-title mb-1">Configuration backups</h3><div class="text-secondary small">Restore validates FreeRADIUS and Duo and automatically keeps the current state as a new backup.</div></div></div><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Backup</th><th>Created</th><th>Users</th><th></th></tr></thead><tbody>{% for backup in backups[:10] %}<tr><td><code>{{ backup.name }}</code></td><td class="text-secondary">{{ backup.created_at[:16] | replace('T', ' ') }} UTC</td><td>{{ backup.user_count if backup.user_count is not none else 'Unknown' }}</td><td class="text-end"><button type="button" class="btn btn-outline-warning btn-sm js-restore" data-backup="{{ backup.name }}">Restore</button></td></tr>{% else %}<tr><td colspan="4" class="text-secondary">No backups available.</td></tr>{% endfor %}</tbody></table></div></div>
+          </section>
+        </div></div>
       </main>
     </div>
 
-    <div class="modal modal-blur fade" id="create-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered"><form class="modal-content" method="post" action="/users">
-        <div class="modal-header"><h2 class="modal-title">Add VPN user</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-        <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="mb-3"><label class="form-label" for="create-username">Username</label><input class="form-control" id="create-username" name="username" required minlength="1" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"><small class="form-hint">Use the exact Duo username when Duo Push is required.</small></div><div class="mb-3"><label class="form-label" for="create-password">Initial password</label><input class="form-control" id="create-password" name="password" type="password" required minlength="14" maxlength="128" autocomplete="new-password"><small class="form-hint">14–128 characters. It will never be shown again.</small></div><div><label class="form-label" for="create-duo">Authentication</label><select class="form-select" id="create-duo" name="duo_required"><option value="true" selected>Password + Duo Push</option><option value="false">Password only</option></select><small class="form-hint">Password only bypasses Duo for this VPN integration.</small></div></div>
-        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create user</button></div>
-      </form></div>
-    </div>
+    <dialog class="admin-dialog" id="create-modal" aria-labelledby="create-title"><form class="modal-content" method="post" action="/users">
+      <div class="modal-header"><h2 class="modal-title" id="create-title">Add VPN user</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
+      <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="mb-3"><label class="form-label" for="create-username">Username</label><input class="form-control" id="create-username" name="username" required maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"></div>
+        <div class="mb-3"><label class="form-label" for="create-password">Initial password</label><div class="input-group"><input class="form-control" id="create-password" name="password" type="password" data-secret required minlength="14" maxlength="128" autocomplete="new-password"><button class="btn btn-outline-secondary js-generate-password" type="button" data-target="create-password">Generate</button><button class="btn btn-outline-secondary js-copy-password" type="button" data-target="create-password">Copy</button></div><small class="form-hint">Shown only while this dialog is open.</small></div>
+        <div class="mb-3"><label class="form-label" for="create-duo">Authentication</label><select class="form-select js-duo-mode" id="create-duo" name="duo_required"><option value="true" selected>Password + Duo Push</option><option value="false">Password only</option></select></div>
+        <div class="duo-bypass-fields" hidden><div class="mb-3"><label class="form-label" for="create-bypass-reason">Reason for exception</label><input class="form-control" id="create-bypass-reason" name="duo_bypass_reason" maxlength="160"></div><div class="mb-3"><label class="form-label" for="create-bypass-until">Return to Duo automatically</label><input class="form-control" id="create-bypass-until" name="duo_bypass_until" type="datetime-local"><small class="form-hint">Leave empty only for a deliberate permanent exception.</small></div></div>
+        <div class="mb-3"><label class="form-label" for="create-expiry">Account expiry</label><input class="form-control" id="create-expiry" name="expires_at" type="datetime-local"><small class="form-hint">Optional. The account is blocked automatically after this time.</small></div>
+        <div><label class="form-label" for="create-panel-access">Panel role</label><select class="form-select js-panel-role" id="create-panel-access" name="panel_access"><option value="false" selected>VPN user only</option><option value="true">VPN user + panel administrator</option></select><small class="form-hint">Panel administrators always approve Duo after their separate console password.</small></div>
+        <div class="panel-password-fields mt-3" hidden><label class="form-label" for="create-panel-password">Console password</label><div class="input-group"><input class="form-control" id="create-panel-password" name="panel_password" type="password" data-secret minlength="14" maxlength="128" autocomplete="new-password"><button class="btn btn-outline-secondary js-generate-password" type="button" data-target="create-panel-password">Generate</button><button class="btn btn-outline-secondary js-copy-password" type="button" data-target="create-panel-password">Copy</button></div><small class="form-hint">This must be different from the VPN password.</small></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-primary">Create user</button></div>
+    </form></dialog>
 
-    <dialog class="admin-dialog" id="action-modal" aria-labelledby="action-title">
-      <form class="modal-content" id="action-form" method="post">
-        <div class="modal-header"><h2 class="modal-title" id="action-title">Manage user</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
-        <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div id="action-description" class="text-secondary mb-3"></div><div id="action-field"></div></div>
-        <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close id="action-cancel">Close</button><button class="btn btn-primary" id="action-submit" hidden>Apply change</button></div>
-      </form>
-    </dialog>
+    <dialog class="admin-dialog" id="action-modal" aria-labelledby="action-title"><form class="modal-content" id="action-form" method="post">
+      <div class="modal-header"><h2 class="modal-title" id="action-title">Manage user</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
+      <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><div id="action-description" class="text-secondary mb-3"></div><div id="action-field"></div></div>
+      <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close id="action-cancel">Close</button><button class="btn btn-primary" id="action-submit" hidden>Apply change</button></div>
+    </form></dialog>
 
-    <script src="{{ url_for('static', path='vendor/tabler/tabler.min.js') }}?v=20260901-3"></script>
-    <script src="{{ url_for('static', path='app.js') }}?v=20260901-3"></script>
+    <dialog class="admin-dialog" id="restore-modal" aria-labelledby="restore-title"><form class="modal-content" id="restore-form" method="post">
+      <div class="modal-header"><h2 class="modal-title" id="restore-title">Restore configuration?</h2><button type="button" class="btn-close" data-dialog-close aria-label="Close"></button></div>
+      <div class="modal-body"><input type="hidden" name="csrf" value="{{ csrf }}"><p>This replaces the user state with <code id="restore-name"></code>. The current state is backed up first and both authentication services must validate.</p><label class="form-label" for="restore-confirm">Type RESTORE to continue</label><input class="form-control" id="restore-confirm" required pattern="RESTORE" autocomplete="off"></div>
+      <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-warning">Restore backup</button></div>
+    </form></dialog>
+
+    <script src="{{ url_for('static', path='app.js') }}?v=20260901-5"></script>
   </body>
 </html>

@@ -1,0 +1,17 @@
+[Unit]
+Description=Reconcile expired Example Organization VPN accounts and Duo exceptions
+After=freeradius.service duoauthproxy.service
+
+[Service]
+Type=oneshot
+User=radiusui
+Group=radiusui
+ExecStart=/usr/bin/sudo -n /usr/local/sbin/radius-user-admin-helper reconcile
+StandardInput=data
+StandardInputText={}
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=false
+ReadWritePaths=/etc/freeradius/3.0/mods-config/files/vpn-users /opt/duoauthproxy/conf /opt/duoauthproxy/log /var/lib/radius-user-admin /var/backups/radius-user-admin /run/lock

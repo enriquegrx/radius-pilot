@@ -26,7 +26,7 @@ def call_helper(operation: str, payload: dict[str, Any] | None = None) -> dict[s
             input=request,
             capture_output=True,
             check=False,
-            timeout=30,
+            timeout=75 if operation == "authenticate-admin" else 30,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HelperError("The FreeRADIUS management service is unavailable.") from exc
