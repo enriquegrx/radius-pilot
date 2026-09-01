@@ -67,6 +67,8 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .user-detail { display: grid; gap: 1rem 1.5rem; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); padding: .3rem .2rem .45rem; }
 .user-detail-access { grid-column: 1 / -1; }
 .detail-label { color: #53667c; font-size: .72rem; font-weight: 600; letter-spacing: .04em; margin-bottom: .35rem; text-transform: uppercase; }
+.duo-api-form { align-items: end; display: grid; gap: .75rem; grid-template-columns: 1fr 1fr 1fr auto; }
+.duo-api-submit { padding-bottom: .1rem; }
 .detail-value { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
 .user-detail .btn-sm { font-size: .75rem; padding: .15rem .55rem; }
 .user-detail-actions { border-top: 1px solid rgba(98,105,118,.14); display: flex; flex-wrap: wrap; gap: .5rem; grid-column: 1 / -1; padding-top: .75rem; }
@@ -81,6 +83,7 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
   .user-tools { grid-template-columns: 1fr; width: 100%; }
   .section-nav { overflow-x: auto; max-width: 100%; }
   .access-rule { align-items: stretch; grid-template-columns: 1fr; }
+  .duo-api-form { grid-template-columns: 1fr; }
   .access-rule .js-remove-access-rule { justify-self: start; }
 }
 @media (min-width: 768px) and (max-width: 1199px) {

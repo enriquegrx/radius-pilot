@@ -107,7 +107,75 @@ account, and keep the `local` tail on the vty list. Test from a second SSH
 session before closing the one you configured it from: a wrong list here locks
 you out of your own router.
 
-## 4. Duo Authentication Proxy (`authproxy.cfg`)
+## 4. What to create in the Duo Admin Panel
+
+None of the Duo credentials go into FreeRADIUS: FreeRADIUS only ever checks the
+primary password. The keys live in the Authentication Proxy and in
+RadiusPilot's enrollment file, and they come from **two separate applications**
+you create after signing up at [duo.com](https://duo.com). Duo's free tier
+covers up to ten users, which is what makes this whole setup attractive for a
+small business — and everything RadiusPilot needs works on that tier. In
+particular, the **Admin API application is not required**: it is a paid
+feature, and RadiusPilot deliberately uses only the Auth API (user creation,
+readiness checks and QR enrollments all go through Auth API endpoints).
+
+**1. A RADIUS application for the Authentication Proxy.** In the Duo Admin
+Panel go to *Applications → Protect an Application* and pick **RADIUS** (it
+then appears in your application list as "RADIUS"). Duo shows three values —
+*Integration key*, *Secret key* and *API hostname* — which map directly to
+`ikey=`, `skey=` and `api_host=` in the `[radius_server_auto]` section of
+`authproxy.cfg` below. While you are there, set the application's policy for
+unknown users to **deny**: per-user "password only" exceptions are handled by
+RadiusPilot's managed exemption block, never by loosening the Duo application
+itself.
+
+**2. An Auth API application for enrollment.** Protect a second application of
+type **Auth API** (it appears in the list as "Partner Auth API"). Its three
+values are what RadiusPilot stores in its root-only credential file, which must
+never enter Git:
+
+```json
+// /etc/radius-user-admin/duo-enroll-api.json  (root:root, mode 0600)
+{
+  "ikey": "YOUR-AUTH-API-INTEGRATION-KEY",
+  "skey": "YOUR-AUTH-API-SECRET-KEY",
+  "api_host": "api-XXXXXXXX.duosecurity.com"
+}
+```
+
+You do not have to write that file by hand: a signed-in panel administrator can
+paste the three values under **System → Duo enrollment API** in the console.
+They are validated against Duo before being stored and are never displayed
+again afterwards.
+
+Keep the two applications separate. The console uses the Auth API for
+readiness checks, Push verification and QR enrollments; the proxy uses the
+RADIUS application for logins. Reusing one set of keys for both jobs is
+explicitly unsupported, and the proxy's RADIUS keys are deliberately not
+editable from the console.
+
+**3. Usernames must match exactly.** The username in FreeRADIUS, the one the
+person types into AnyConnect and the one enrolled in Duo are the same string —
+email-style names such as `user@example.com` included. RadiusPilot enforces
+this by checking Duo readiness against the RADIUS username before it enables
+Push for an account.
+
+### From Duo sign-up to a working login
+
+1. Create both applications above and note their keys.
+2. Fill `[radius_server_auto]` in `authproxy.cfg` (next section) with the
+   RADIUS application's keys, validate the proxy configuration, and restart it.
+3. Enter the Auth API keys under **System → Duo enrollment API** in the
+   console (or write `/etc/radius-user-admin/duo-enroll-api.json` by hand).
+4. Create the VPN user in RadiusPilot and use **Enroll in Duo**: the console
+   creates the Duo user through the Auth API and shows a QR activation valid
+   for seven days. The person scans it with Duo Mobile.
+5. Use **Check Duo readiness** from the user's row: it confirms enrollment and
+   Push capability without sending a Push.
+6. Connect with AnyConnect: password first, Push on the phone second. The
+   *Recent VPN authentication* panel in the console shows both stages.
+
+## 5. Duo Authentication Proxy (`authproxy.cfg`)
 
 ```ini
 [main]
@@ -137,7 +205,7 @@ cloud is unreachable; decide deliberately if you prefer `safe`. RadiusPilot
 manages only its marked exemption block inside `[radius_server_auto]` and never
 touches the rest of this file.
 
-## 5. FreeRADIUS
+## 6. FreeRADIUS
 
 FreeRADIUS only answers the proxy on loopback and reads the user file that
 RadiusPilot generates. The relevant pieces:
@@ -169,7 +237,7 @@ AnyConnect-EAP authentication requires. Do not edit it by hand; set
 `RADIUS_ADMIN_AUTHORIZE_PATH` if your files module uses a site-specific
 directory.
 
-## 6. Prove it end to end
+## 7. Prove it end to end
 
 Follow the safe rollout checklist in the README before trusting custom access
 policies: create a canary account with one narrow rule, connect with

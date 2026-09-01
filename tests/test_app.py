@@ -88,6 +88,11 @@ def fake_helper(operation: str, _payload=None):
             "last_backup": None,
             "disk_free_mb": 4096,
         },
+        "duo_enrollment_api": {
+            "configured": False,
+            "api_host": "",
+            "ikey_hint": "",
+        },
         "access_policy": {
             "custom_enabled": False,
             "allowed_destinations": ["192.0.2.0/24"],
@@ -150,6 +155,44 @@ def test_dashboard_shows_expandable_details_and_expiry_warning(monkeypatch) -> N
     assert "Access objects" in response.text
     assert "core-dns" in response.text
     assert "js-object-edit" in response.text
+    assert "Duo enrollment API" in response.text
+    assert "Not configured" in response.text
+
+
+def test_duo_enrollment_settings_endpoint_forwards_payload(monkeypatch) -> None:
+    mutations = []
+
+    def recording_helper(operation: str, payload=None):
+        if operation == "set-duo-enroll-api":
+            mutations.append(payload)
+            return {"ok": True}
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", recording_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/settings/duo-enrollment",
+        data={
+            "csrf": csrf,
+            "ikey": "DIABCDEFABCDEFABCDEF",
+            "skey": "secret-key-value-that-never-renders",
+            "api_host": "api-12345678.duosecurity.com",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert len(mutations) == 1
+    assert mutations[0]["ikey"] == "DIABCDEFABCDEFABCDEF"
+    assert mutations[0]["api_host"] == "api-12345678.duosecurity.com"
+    assert "secret-key-value-that-never-renders" not in response.text
 
 
 def test_access_object_endpoints_forward_payloads(monkeypatch) -> None:

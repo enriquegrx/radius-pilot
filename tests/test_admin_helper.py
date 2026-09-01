@@ -788,6 +788,47 @@ def test_state_with_unknown_object_reference_fails_closed(store: Store) -> None:
         store.load()
 
 
+def test_set_duo_enroll_api_validates_and_writes_root_only(store: Store) -> None:
+    calls = []
+    store._duo_request = (  # type: ignore[method-assign]
+        lambda path, params, **kwargs: calls.append((path, kwargs.get("credentials")))
+        or {}
+    )
+    store.set_duo_enroll_api(
+        {
+            "ikey": " DIABCDEFABCDEFABCDEF ",
+            "skey": "s" * 40,
+            "api_host": "API-12345678.DUOSECURITY.COM",
+        }
+    )
+    saved = json.loads(store.duo_enroll_config_path.read_text())
+    assert saved == {
+        "ikey": "DIABCDEFABCDEFABCDEF",
+        "skey": "s" * 40,
+        "api_host": "api-12345678.duosecurity.com",
+    }
+    assert oct(store.duo_enroll_config_path.stat().st_mode & 0o777) == "0o600"
+    assert calls[0][0] == "/auth/v2/check"
+    assert calls[0][1]["api_host"] == "api-12345678.duosecurity.com"
+    assert store.duo_enroll_api_status() == {
+        "configured": True,
+        "api_host": "api-12345678.duosecurity.com",
+        "ikey_hint": "DIAB",
+    }
+
+
+def test_set_duo_enroll_api_rejects_non_duo_hostname(store: Store) -> None:
+    def fail(*_args, **_kwargs):
+        raise AssertionError("Duo must not be contacted for an invalid hostname")
+
+    store._duo_request = fail  # type: ignore[method-assign]
+    with pytest.raises(AdminError, match="hostname"):
+        store.set_duo_enroll_api(
+            {"ikey": "DIABCDEF", "skey": "s" * 40, "api_host": "evil.example.com"}
+        )
+    assert not store.duo_enroll_config_path.exists()
+
+
 def test_public_list_includes_compiled_avpairs(store: Store) -> None:
     enable_custom_access(store)
     store.mutate(

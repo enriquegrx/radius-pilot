@@ -306,6 +306,10 @@ def index(request: Request):
         access_policy = data.get(
             "access_policy", {"custom_enabled": False, "allowed_destinations": []}
         )
+        duo_enrollment_api = data.get(
+            "duo_enrollment_api",
+            {"configured": False, "api_host": "", "ikey_hint": ""},
+        )
     except HelperError as exc:
         users, backups, invitations, error = [], [], [], str(exc)
         activity = {"events": [], "auth_events": []}
@@ -319,6 +323,7 @@ def index(request: Request):
             "disk_free_mb": None,
         }
         access_policy = {"custom_enabled": False, "allowed_destinations": []}
+        duo_enrollment_api = {"configured": False, "api_host": "", "ikey_hint": ""}
     expiry_warning = datetime.now(UTC) + timedelta(days=7)
     for user in users:
         user["expires_soon"] = False
@@ -361,6 +366,7 @@ def index(request: Request):
             "custom_access_enabled": bool(access_policy.get("custom_enabled")),
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
             "access_objects": access_policy.get("objects", []),
+            "duo_enrollment_api": duo_enrollment_api,
         },
     )
 
@@ -726,6 +732,23 @@ def set_access_policy(
         csrf,
         "set-access-policy",
         {"username": username, "access_policy": policy},
+    )
+
+
+@app.post("/settings/duo-enrollment")
+def set_duo_enrollment_api(
+    request: Request,
+    csrf: str = Form(),
+    ikey: str = Form(),
+    skey: str = Form(),
+    api_host: str = Form(),
+):
+    return mutate(
+        request,
+        csrf,
+        "set-duo-enroll-api",
+        {"ikey": ikey, "skey": skey, "api_host": api_host},
+        anchor="system",
     )
 
 

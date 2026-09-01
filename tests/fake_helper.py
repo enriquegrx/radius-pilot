@@ -41,6 +41,11 @@ elif sys.argv[1] == "list":
                     "last_backup": None,
                     "disk_free_mb": 4096,
                 },
+                "duo_enrollment_api": {
+                    "configured": True,
+                    "api_host": "api-xxxxxxxx.duosecurity.com",
+                    "ikey_hint": "DIXX",
+                },
                 "access_policy": {
                     "custom_enabled": True,
                     "allowed_destinations": ["192.0.2.0/24"],

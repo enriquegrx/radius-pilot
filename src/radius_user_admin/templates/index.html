@@ -128,6 +128,21 @@
               <div class="card service-card"><div class="card-body"><span class="status-dot {{ 'bg-green' if health.certificate.valid else 'bg-red' }}"></span><div><strong>HTTPS certificate</strong><div class="text-secondary small">{% if health.certificate.days_remaining is not none %}{{ health.certificate.days_remaining }} days remaining{% else %}Status unavailable{% endif %}</div></div></div></div>
               <div class="card service-card"><div class="card-body"><span class="status-dot {{ 'bg-green' if health.disk_free_mb is not none and health.disk_free_mb > 1024 else 'bg-yellow' }}"></span><div><strong>Disk space</strong><div class="text-secondary small">{% if health.disk_free_mb is not none %}{{ health.disk_free_mb }} MiB free{% else %}Status unavailable{% endif %}</div></div></div></div>
             </div>
+            <div class="card mt-3">
+              <div class="card-header user-card-header">
+                <div><h3 class="card-title mb-1">Duo enrollment API</h3><div class="text-secondary small">Separate Auth API application used for readiness checks and QR enrollments. Keys are stored root-only and never displayed again.</div></div>
+                <div>{% if duo_enrollment_api.configured %}<span class="badge bg-green-lt">Configured · {{ duo_enrollment_api.ikey_hint }}… · {{ duo_enrollment_api.api_host }}</span>{% else %}<span class="badge bg-red-lt">Not configured</span>{% endif %}</div>
+              </div>
+              <div class="card-body">
+                <form method="post" action="/settings/duo-enrollment" class="duo-api-form"><input type="hidden" name="csrf" value="{{ csrf }}">
+                  <div><label class="form-label" for="duo-ikey">Integration key</label><input class="form-control" id="duo-ikey" name="ikey" required maxlength="128" autocomplete="off"></div>
+                  <div><label class="form-label" for="duo-skey">Secret key</label><input class="form-control" id="duo-skey" name="skey" type="password" required maxlength="128" autocomplete="new-password"></div>
+                  <div><label class="form-label" for="duo-api-host">API hostname</label><input class="form-control" id="duo-api-host" name="api_host" required maxlength="128" placeholder="api-XXXXXXXX.duosecurity.com" autocomplete="off"></div>
+                  <div class="duo-api-submit"><button class="btn btn-primary">Validate and save</button></div>
+                </form>
+                <small class="form-hint d-block mt-2">The keys are checked against Duo before they are saved. The Authentication Proxy's RADIUS application keys are deliberately not editable from the panel.</small>
+              </div>
+            </div>
             <div class="card mt-3"><div class="card-header"><div><h3 class="card-title mb-1">Configuration backups</h3><div class="text-secondary small">Restore validates FreeRADIUS and Duo and automatically keeps the current state as a new backup.</div></div></div><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Backup</th><th>Created</th><th>Users</th><th></th></tr></thead><tbody>{% for backup in backups[:10] %}<tr><td><code>{{ backup.name }}</code></td><td class="text-secondary">{{ backup.created_at[:16] | replace('T', ' ') }} UTC</td><td>{{ backup.user_count if backup.user_count is not none else 'Unknown' }}</td><td class="text-end"><button type="button" class="btn btn-outline-warning btn-sm js-restore" data-backup="{{ backup.name }}">Restore</button></td></tr>{% else %}<tr><td colspan="4" class="text-secondary">No backups available.</td></tr>{% endfor %}</tbody></table></div></div>
           </section>
         </div></div>

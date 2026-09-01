@@ -76,6 +76,7 @@ OPERATIONS = {
     "duo-check",
     "duo-enroll",
     "duo-enrollment",
+    "set-duo-enroll-api",
     "migrate-passwords",
     "invite-create",
     "invite-list",
@@ -554,6 +555,7 @@ class Store:
         return {
             "users": users,
             "health": self.health(),
+            "duo_enrollment_api": self.duo_enroll_api_status(),
             "access_policy": {
                 "custom_enabled": self._custom_dacl_ready(),
                 "allowed_destinations": [item.with_prefixlen for item in self.policy_destinations],
@@ -1848,6 +1850,44 @@ class Store:
         required["api_host"] = host
         return required
 
+    def duo_enroll_api_status(self) -> dict[str, Any]:
+        try:
+            credentials = self._duo_enroll_credentials()
+        except AdminError:
+            return {"configured": False, "api_host": "", "ikey_hint": ""}
+        return {
+            "configured": True,
+            "api_host": credentials["api_host"],
+            "ikey_hint": credentials["ikey"][:4],
+        }
+
+    def set_duo_enroll_api(self, payload: dict[str, Any]) -> None:
+        credentials = {
+            name: str(payload.get(name) or "").strip()
+            for name in ("ikey", "skey", "api_host")
+        }
+        credentials["api_host"] = credentials["api_host"].lower()
+        if not all(credentials.values()) or any(
+            len(value) > 128 for value in credentials.values()
+        ):
+            raise AdminError("Provide the integration key, secret key and API hostname.")
+        if not re.fullmatch(r"api-[a-z0-9-]+\.duosecurity\.com", credentials["api_host"]):
+            raise AdminError(
+                "The API hostname must look like api-XXXXXXXX.duosecurity.com."
+            )
+        self._duo_request(
+            "/auth/v2/check",
+            {},
+            timeout=10,
+            error_message="Duo rejected the enrollment API credentials.",
+            credentials=credentials,
+        )
+        self._atomic_write(
+            self.duo_enroll_config_path,
+            json.dumps(credentials, indent=2) + "\n",
+            0o600,
+        )
+
     @staticmethod
     def _config_section(config: str, name: str) -> dict[str, str]:
         values: dict[str, str] = {}
@@ -2034,6 +2074,9 @@ def main() -> int:
             result = {"enrollment": store.duo_enroll(payload.get("username"))}
         elif args.operation == "duo-enrollment":
             result = {"enrollment": store.duo_enrollment(payload.get("username"))}
+        elif args.operation == "set-duo-enroll-api":
+            store.set_duo_enroll_api(payload)
+            result = {}
         elif args.operation == "migrate-passwords":
             result = {"migrated": store.migrate_passwords(payload.get("username"))}
         elif args.operation == "invite-create":
@@ -2097,6 +2140,7 @@ def main() -> int:
             "set-admin-password",
             "set-panel-access",
             "duo-enroll",
+            "set-duo-enroll-api",
             "migrate-passwords",
             "invite-create",
             "invite-accept",
