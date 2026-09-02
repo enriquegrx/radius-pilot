@@ -5,7 +5,7 @@ current when a port or integration changes.
 Addresses and names here are RFC 5737-style examples — substitute your own;
 the live values stay on the hosts, never in git.
 
-## `radius01` (192.0.2.10)
+## `radius01` (192.0.2.112)
 
 | Port | Proto | Service | Bound to | From | Purpose |
 |------|-------|---------|----------|------|---------|
@@ -13,8 +13,8 @@ the live values stay on the hosts, never in git.
 | 443 | tcp | Nginx | all | web set | HTTPS console (RadiusPilot) |
 | 8080 | tcp | FastAPI (uvicorn) | 127.0.0.1 | Nginx only | Console backend (loopback) |
 | 1812 | udp | **Duo Auth Proxy** | all | gateway 192.0.2.1 | **VPN** AnyConnect auth → Duo Push |
-| 1813 | udp | **FreeRADIUS** | 192.0.2.10 | gateway 192.0.2.1 | **RADIUS accounting** (feeds "online now" / map / CoA) |
-| 1814 | udp | **FreeRADIUS** `device-admin` vserver | 192.0.2.10 | gateway (pass 1) / Duo proxy (pass 2) | **Device CLI auth** (router/switch SSH/console) → priv 15 |
+| 1813 | udp | **FreeRADIUS** | 192.0.2.112 | gateway 192.0.2.1 | **RADIUS accounting** (feeds "online now" / map / CoA) |
+| 1814 | udp | **FreeRADIUS** `device-admin` vserver | 192.0.2.112 | gateway (pass 1) / Duo proxy (pass 2) | **Device CLI auth** (router/switch SSH/console) → priv 15 |
 | 1815 | udp | **Duo Auth Proxy** (device-admin) | all | gateway 192.0.2.1 | **Device CLI auth WITH Duo Push** (pass 2) |
 | 18120 | udp | **FreeRADIUS** `primary` site | 127.0.0.1 | Duo proxy only | VPN primary-auth backend (behind the Duo proxy) |
 
@@ -54,7 +54,7 @@ line `local` still covers a full RADIUS outage).
 | Router ↔ FreeRADIUS (acct, 1813) | router `radius server VPN-ACCT`; FreeRADIUS `acct_clients` |
 | Router ↔ FreeRADIUS (device-admin direct, 1814, pass 1) | router `radius server RADIUSPILOT-ADMIN key`; FreeRADIUS `device_admin_clients` (client 192.0.2.1) |
 | Router ↔ Duo proxy (device-admin, 1815, pass 2) | router `radius server RADIUSPILOT-ADMIN key`; Duo proxy `[radius_server_auto1] radius_secret_1` |
-| Duo proxy ↔ FreeRADIUS (device-admin backend, 1814, pass 2) | Duo proxy `[radius_client1] secret`; FreeRADIUS `device_admin_clients` (client 192.0.2.10) |
+| Duo proxy ↔ FreeRADIUS (device-admin backend, 1814, pass 2) | Duo proxy `[radius_client1] secret`; FreeRADIUS `device_admin_clients` (client 192.0.2.112) |
 | Duo proxy ↔ FreeRADIUS (VPN backend, 18120) | Duo proxy `[radius_client] secret`; FreeRADIUS `loopback_clients` |
 | Router CoA (dynamic-author) | router `aaa server radius dynamic-author`; RadiusPilot `RADIUS_ADMIN_COA_SECRET` |
 

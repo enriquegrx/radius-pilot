@@ -206,7 +206,7 @@ Authentication Proxy integration that fronts it with the Push:
 
 ```ini
 [radius_client1]
-host=192.0.2.10                 ; the FreeRADIUS device-admin listener
+host=192.0.2.112                 ; the FreeRADIUS device-admin listener
 port=1814
 secret=<proxy-to-freeradius secret>
 pass_through_attr_names=Cisco-AVPair
@@ -228,7 +228,7 @@ Push time to be approved:
 
 ```
 radius server RADIUSPILOT-ADMIN
- address ipv4 192.0.2.10 auth-port 1815 acct-port 0
+ address ipv4 192.0.2.112 auth-port 1815 acct-port 0
  key <device-to-proxy secret>
  timeout 60
  retransmit 1
