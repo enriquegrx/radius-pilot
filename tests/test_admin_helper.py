@@ -1025,7 +1025,7 @@ def test_disconnect_session_sends_coa(store: Store, monkeypatch: pytest.MonkeyPa
     store.accounting_detail_path.write_text(
         datetime.now().strftime("%a %b %d %H:%M:%S %Y")
         + '\n\tUser-Name = "kick-me"\n\tAcct-Status-Type = Start\n'
-        '\tAcct-Session-Id = "Z1"\n\tNAS-IP-Address = 192.0.2.1\n'
+        '\tAcct-Session-Id = "Z1"\n\tFramed-IP-Address = 192.0.2.235\n'
         '\tCisco-AVPair = "audit-session-id=AUD-Z"\n\n'
     )
     calls = []
@@ -1040,8 +1040,8 @@ def test_disconnect_session_sends_coa(store: Store, monkeypatch: pytest.MonkeyPa
     command, payload = calls[0]
     assert command[0] == "/usr/bin/radclient"
     assert "disconnect" in command
-    assert 'Acct-Session-Id = "Z1"' in payload
-    assert "audit-session-id=AUD-Z" in payload
+    # IOS XE matches AnyConnect sessions on the assigned Framed-IP-Address.
+    assert "Framed-IP-Address = 192.0.2.235" in payload
 
 
 def test_disconnect_session_requires_configuration(store: Store) -> None:

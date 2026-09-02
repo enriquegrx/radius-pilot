@@ -2037,15 +2037,14 @@ class Store:
             raise AdminError("That account has no live session to disconnect.")
         disconnected = 0
         for session in sessions:
-            lines = [f'User-Name = "{clean}"']
-            if session.get("nas_ip"):
-                lines.append(f'NAS-IP-Address = {session["nas_ip"]}')
-            if session.get("session_id"):
-                lines.append(f'Acct-Session-Id = "{session["session_id"]}"')
-            if session.get("audit_session_id"):
-                lines.append(
-                    f'Cisco-AVPair = "audit-session-id={session["audit_session_id"]}"'
-                )
+            # IOS XE matches the disconnect on the assigned Framed-IP-Address for
+            # AnyConnect/FlexVPN sessions; adding other identifiers makes it NAK.
+            if session.get("ip"):
+                lines = [f'Framed-IP-Address = {session["ip"]}']
+            elif session.get("audit_session_id"):
+                lines = [f'Cisco-AVPair = "audit-session-id={session["audit_session_id"]}"']
+            else:
+                lines = [f'User-Name = "{clean}"']
             result = self.runner(
                 ["/usr/bin/radclient", "-t", "5", "-r", "1", target, "disconnect", secret],
                 input="\n".join(lines) + "\n",
