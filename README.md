@@ -59,6 +59,10 @@ every write is validated before it reaches the live authentication service.
   QR code or mobile activation link only to a signed-in panel administrator.
 - Shows service, certificate, disk, and backup health, and exports redacted
   diagnostics and audit CSV files.
+- Optionally shows who is connected right now, with assigned IP and session
+  duration, from RADIUS accounting.
+- Optionally emails the administrator when the service degrades or recovers and
+  before accounts expire.
 - Lists configuration backups and restores them through the same validation and
   rollback path used for ordinary changes.
 - Resets a password without ever showing the previous one.

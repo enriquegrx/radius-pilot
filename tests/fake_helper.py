@@ -26,6 +26,11 @@ elif sys.argv[1] == "list":
                         "access_policy": {"mode": "full", "rules": []},
                         "access_summary": "Full access",
                         "access_avpairs": [],
+                        "session": {
+                            "ip": "192.0.2.201",
+                            "since": "2026-09-02T07:00:00+00:00",
+                            "seconds": 3720,
+                        },
                         "custom_access_eligible": True,
                         "created_at": "2026-01-01T00:00:00+00:00",
                         "updated_at": "2026-01-01T00:00:00+00:00",
@@ -41,6 +46,8 @@ elif sys.argv[1] == "list":
                     "last_backup": None,
                     "disk_free_mb": 4096,
                 },
+                "online_count": 1,
+                "accounting_enabled": True,
                 "duo_enrollment_api": {
                     "configured": True,
                     "api_host": "api-xxxxxxxx.duosecurity.com",

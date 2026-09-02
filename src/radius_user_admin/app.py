@@ -376,6 +376,8 @@ def index(request: Request):
             ),
             "panel_admin_count": sum(user["panel_access"] for user in users),
             "expiring_count": sum(user["expires_soon"] for user in users),
+            "online_count": data.get("online_count", 0) if not error else 0,
+            "accounting_enabled": bool(data.get("accounting_enabled")) if not error else False,
             "custom_access_enabled": bool(access_policy.get("custom_enabled")),
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
             "access_objects": access_policy.get("objects", []),

@@ -237,7 +237,40 @@ AnyConnect-EAP authentication requires. Do not edit it by hand; set
 `RADIUS_ADMIN_AUTHORIZE_PATH` if your files module uses a site-specific
 directory.
 
-## 7. Prove it end to end
+## 7. Optional: live "online now" with RADIUS accounting
+
+To show connected sessions in the console, have the gateway send RADIUS
+accounting and let FreeRADIUS log it where RadiusPilot can read it.
+
+On the ISR, add accounting to the AnyConnect profile's authorization and point
+it at the same RADIUS group:
+
+```
+aaa accounting network ANYCONNECT-ACCT start-stop group DUO-RADIUS
+
+crypto ikev2 profile ANYCONNECT-EAP
+ aaa accounting anyconnect-eap ANYCONNECT-ACCT
+```
+
+The `radius server` block already sets `acct-port 1813`. Test from a second
+session before relying on it; accounting is best-effort and never blocks a
+login.
+
+On `radius01`:
+
+- Allow `1813/udp` from the gateway in the firewall (see `deploy/nftables.conf`).
+- Install `deploy/freeradius-radius-pilot-detail.conf` as a FreeRADIUS `detail`
+  module, enable it, and reference `radius_pilot_detail` in the site's
+  `accounting {}` section. Install `deploy/radius-pilot-detail.logrotate` to
+  keep the file bounded. Validate FreeRADIUS and restart it.
+
+RadiusPilot reads the detail file and reconstructs current sessions: a session
+is online while its latest accounting record is not a Stop and is newer than
+`RADIUS_ADMIN_ACCT_STALE_SECONDS` (default 1800), so a lost Stop cannot pin a
+user online forever. The dashboard then shows an "Online now" count, an Online
+badge on connected users, and the assigned IP and duration in the user's row.
+
+## 8. Prove it end to end
 
 Follow the safe rollout checklist in the README before trusting custom access
 policies: create a canary account with one narrow rule, connect with

@@ -66,10 +66,12 @@ port=1812
         admin_path=tmp_path / "state/admins.json",
         audit_path=tmp_path / "state/audit.jsonl",
         auth_events_path=tmp_path / "authevents.log",
+        accounting_detail_path=tmp_path / "radacct-detail",
         certificate_path=tmp_path / "fullchain.pem",
         enrollment_path=tmp_path / "state/duo-enrollments.json",
         invitation_path=tmp_path / "state/invitations.json",
         duo_enroll_config_path=tmp_path / "duo-enroll-api.json",
+        monitor_path=tmp_path / "state/monitor.json",
         runner=Runner(),
     )
     result.bootstrap()
@@ -881,6 +883,7 @@ def test_reconcile_emails_expiring_accounts_once(
     monkeypatch.setenv("RADIUS_ADMIN_SMTP_HOST", "smtp.example.test")
     monkeypatch.setenv("RADIUS_ADMIN_ADMIN_EMAIL", "ops@example.test")
     monkeypatch.setenv("RADIUS_ADMIN_EXPIRY_WARNING_DAYS", "7")
+    monkeypatch.setattr(store, "_health_issues", lambda: [])
     sent = []
     store._send_admin_email = (  # type: ignore[method-assign]
         lambda recipient, subject, body: sent.append((recipient, subject, body))
@@ -898,6 +901,93 @@ def test_reconcile_emails_expiring_accounts_once(
     # A second reconcile must not re-warn the same expiry.
     assert not any("warned about" in c for c in store.reconcile())
     assert len(sent) == 1
+
+
+def test_reconcile_alerts_and_recovers_on_health_change(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADIUS_ADMIN_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("RADIUS_ADMIN_ADMIN_EMAIL", "ops@example.test")
+    sent = []
+    store._send_admin_email = (  # type: ignore[method-assign]
+        lambda recipient, subject, body: sent.append((subject, body))
+    )
+    issues = [("certificate", "The HTTPS certificate expires in 5 day(s).")]
+    monkeypatch.setattr(store, "_health_issues", lambda: list(issues))
+
+    assert any("health alert" in c for c in store.reconcile())
+    assert len(sent) == 1
+    assert "needs attention" in sent[0][0]
+    # Unchanged state does not re-alert.
+    assert not any("health" in c for c in store.reconcile())
+    assert len(sent) == 1
+    # Clearing the problem sends a recovery message.
+    issues.clear()
+    assert any("health recovered" in c for c in store.reconcile())
+    assert len(sent) == 2
+    assert "recovered" in sent[1][0]
+
+
+def test_health_alerts_stay_silent_without_smtp(store: Store) -> None:
+    sent = []
+    store._send_admin_email = (  # type: ignore[method-assign]
+        lambda *args: sent.append(args)
+    )
+    store._health_issues = lambda: [("freeradius", "down")]  # type: ignore[method-assign]
+    assert store._health_alerts() == []
+    assert sent == []
+
+
+def test_active_sessions_from_accounting_detail(store: Store) -> None:
+    detail = (
+        "Tue Sep  2 08:00:00 2026\n"
+        '\tUser-Name = "canary-acl"\n'
+        "\tAcct-Status-Type = Start\n"
+        '\tAcct-Session-Id = "S-ONLINE"\n'
+        "\tFramed-IP-Address = 192.0.2.200\n"
+        "\tAcct-Session-Time = 0\n\n"
+        "Tue Sep  2 08:20:00 2026\n"
+        '\tUser-Name = "canary-acl"\n'
+        "\tAcct-Status-Type = Interim-Update\n"
+        '\tAcct-Session-Id = "S-ONLINE"\n'
+        "\tFramed-IP-Address = 192.0.2.200\n"
+        "\tAcct-Session-Time = 1200\n\n"
+        "Tue Sep  2 08:00:00 2026\n"
+        '\tUser-Name = "gone"\n'
+        "\tAcct-Status-Type = Start\n"
+        '\tAcct-Session-Id = "S-STOPPED"\n\n'
+        "Tue Sep  2 08:10:00 2026\n"
+        '\tUser-Name = "gone"\n'
+        "\tAcct-Status-Type = Stop\n"
+        '\tAcct-Session-Id = "S-STOPPED"\n\n'
+        "Tue Sep  2 06:00:00 2026\n"
+        '\tUser-Name = "stale"\n'
+        "\tAcct-Status-Type = Start\n"
+        '\tAcct-Session-Id = "S-STALE"\n\n'
+    )
+    store.accounting_detail_path.write_text(detail)
+    now = datetime(2026, 9, 2, 8, 25, 0)
+    sessions = store.active_sessions(now=now)
+    assert set(sessions) == {"canary-acl"}
+    assert sessions["canary-acl"]["ip"] == "192.0.2.200"
+    assert sessions["canary-acl"]["seconds"] == 1200
+    assert "gone" not in sessions  # a Stop clears the session
+    assert "stale" not in sessions  # older than the staleness window
+
+
+def test_public_list_reports_online_sessions(store: Store) -> None:
+    store.accounting_detail_path.write_text(
+        datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+        + '\n\tUser-Name = "vpn-test-user"\n'
+        "\tAcct-Status-Type = Start\n"
+        '\tAcct-Session-Id = "S1"\n'
+        "\tFramed-IP-Address = 192.0.2.201\n\n"
+    )
+    result = store.public_list()
+    assert result["online_count"] == 1
+    assert result["accounting_enabled"] is True
+    user = next(u for u in result["users"] if u["username"] == "vpn-test-user")
+    assert user["session"]["ip"] == "192.0.2.201"
 
 
 def test_public_list_reports_readiness_flags(store: Store) -> None:

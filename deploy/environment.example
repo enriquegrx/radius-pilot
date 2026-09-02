@@ -25,6 +25,16 @@ RADIUS_ADMIN_SMTP_PASSWORD=replace-with-an-app-password
 RADIUS_ADMIN_SMTP_FROM=RadiusPilot <radiuspilot@your-domain.com>
 
 # Optional. With SMTP configured, the reconciler emails this address a digest
-# of accounts expiring within the warning window. Each account is warned once.
+# of accounts expiring within the warning window (each account once), and an
+# alert when the authentication service degrades — a service down, an invalid
+# configuration, the certificate within the warning window, or low disk — plus
+# a recovery message when it clears. Alerts are sent once per state change.
 RADIUS_ADMIN_ADMIN_EMAIL=vpn-admins@your-domain.com
 RADIUS_ADMIN_EXPIRY_WARNING_DAYS=7
+RADIUS_ADMIN_CERT_WARNING_DAYS=21
+
+# Optional. When RADIUS accounting is enabled, a session is considered online
+# while its latest accounting record is newer than this many seconds, so a lost
+# Stop packet cannot pin a user online forever. Set above the gateway's interim
+# accounting interval.
+RADIUS_ADMIN_ACCT_STALE_SECONDS=1800

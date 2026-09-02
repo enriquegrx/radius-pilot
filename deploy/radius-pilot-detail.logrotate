@@ -1,0 +1,14 @@
+# Keep the RadiusPilot accounting detail file bounded.
+# Install as /etc/logrotate.d/radius-pilot-detail
+#
+# The console only needs recent records to reconstruct current sessions, so a
+# short retention is plenty. copytruncate avoids signalling FreeRADIUS.
+/var/log/freeradius/radacct/radius-pilot-detail {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

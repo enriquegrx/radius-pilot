@@ -271,10 +271,14 @@ class Store:
         admin_path: Path = Path("/var/lib/radius-user-admin/admins.json"),
         audit_path: Path = Path("/var/lib/radius-user-admin/audit.jsonl"),
         auth_events_path: Path = Path("/opt/duoauthproxy/log/authevents.log"),
+        accounting_detail_path: Path = Path(
+            "/var/log/freeradius/radacct/radius-pilot-detail"
+        ),
         certificate_path: Path = Path("/etc/ssl/radius-user-admin/fullchain.pem"),
         enrollment_path: Path = Path("/var/lib/radius-user-admin/duo-enrollments.json"),
         invitation_path: Path = Path("/var/lib/radius-user-admin/invitations.json"),
         duo_enroll_config_path: Path = Path("/etc/radius-user-admin/duo-enroll-api.json"),
+        monitor_path: Path = Path("/var/lib/radius-user-admin/monitor.json"),
         policy_destinations: str | None = None,
         local_fallback_users: str | None = None,
         custom_dacl_enabled: bool | None = None,
@@ -288,10 +292,12 @@ class Store:
         self.admin_path = admin_path
         self.audit_path = audit_path
         self.auth_events_path = auth_events_path
+        self.accounting_detail_path = accounting_detail_path
         self.certificate_path = certificate_path
         self.enrollment_path = enrollment_path
         self.invitation_path = invitation_path
         self.duo_enroll_config_path = duo_enroll_config_path
+        self.monitor_path = monitor_path
         if policy_destinations is None:
             policy_destinations = runtime_setting(
                 "RADIUS_ADMIN_POLICY_DESTINATIONS", DEFAULT_ALLOWED_DESTINATIONS
@@ -503,6 +509,7 @@ class Store:
         data = self.load()
         objects = self._objects_map(data)
         auth = self.last_authentication()
+        sessions = self.active_sessions()
         panel_admins = self.panel_admin_usernames()
         current_timestamp = int(datetime.now(UTC).timestamp())
         active_enrollments = {
@@ -529,6 +536,7 @@ class Store:
             public["effective_enabled"] = self._effective_enabled(item)
             public["effective_duo_required"] = self._effective_duo_required(item)
             public["last_auth"] = auth.get(item["username"])
+            public["session"] = sessions.get(item["username"])
             public["panel_access"] = item["username"] in panel_admins
             public["duo_enrollment_active"] = item["username"] in active_enrollments
             public["credential_scheme"] = (
@@ -563,6 +571,8 @@ class Store:
         return {
             "users": users,
             "health": self.health(),
+            "online_count": len(sessions),
+            "accounting_enabled": self.accounting_detail_path.exists(),
             "duo_enrollment_api": self.duo_enroll_api_status(),
             "access_policy": {
                 "custom_enabled": self._custom_dacl_ready(),
@@ -1280,7 +1290,71 @@ class Store:
             changes.append("reconciled managed RADIUS authorization")
         changes.extend(self._rotate_audit())
         changes.extend(self._prune_backups())
+        changes.extend(self._health_alerts())
         return changes
+
+    def _health_issues(self) -> list[tuple[str, str]]:
+        try:
+            threshold = int(runtime_setting("RADIUS_ADMIN_CERT_WARNING_DAYS", "21"))
+        except ValueError:
+            threshold = 21
+        health = self.health()
+        issues: list[tuple[str, str]] = []
+        if not health["active"]:
+            issues.append(("freeradius", "FreeRADIUS is not active."))
+        if not health["config_valid"]:
+            issues.append(("config", "The FreeRADIUS configuration does not validate."))
+        if not health["duo_active"]:
+            issues.append(("duo", "The Duo Authentication Proxy is not active."))
+        if not health["nginx_active"]:
+            issues.append(("nginx", "Nginx is not active."))
+        certificate = health["certificate"]
+        days = certificate.get("days_remaining")
+        if not certificate.get("valid"):
+            issues.append(("certificate", "The HTTPS certificate is invalid or unreadable."))
+        elif days is not None and days <= threshold:
+            issues.append(("certificate", f"The HTTPS certificate expires in {days} day(s)."))
+        disk = health["disk_free_mb"]
+        if disk is not None and disk < 512:
+            issues.append(("disk", f"Low disk space: {disk} MiB free."))
+        return issues
+
+    def _health_alerts(self) -> list[str]:
+        recipient = runtime_setting("RADIUS_ADMIN_ADMIN_EMAIL", "").strip()
+        host = runtime_setting("RADIUS_ADMIN_SMTP_HOST", "").strip()
+        if not recipient or not host:
+            return []
+        issues = self._health_issues()
+        current = sorted(key for key, _ in issues)
+        try:
+            previous = json.loads(self.monitor_path.read_text()).get("alerted", [])
+        except (OSError, json.JSONDecodeError):
+            previous = []
+        if current == sorted(previous):
+            return []
+        if issues:
+            subject = "RadiusPilot: service needs attention"
+            body = "\n".join(
+                ["RadiusPilot detected problems with the authentication service:", "",
+                 *(f"- {message}" for _, message in issues), "",
+                 "Check the System tab in the console."]
+            )
+            summary = f"health alert: {len(issues)} issue(s)"
+        else:
+            subject = "RadiusPilot: service recovered"
+            body = "The previously reported authentication service problems have cleared."
+            summary = "health recovered"
+        try:
+            self._send_admin_email(recipient, subject, body)
+        except (OSError, smtplib.SMTPException):
+            return []
+        try:
+            self._atomic_write(
+                self.monitor_path, json.dumps({"alerted": current}) + "\n", 0o600
+            )
+        except OSError:
+            pass
+        return [summary]
 
     def _send_admin_email(self, recipient: str, subject: str, body: str) -> None:
         host = runtime_setting("RADIUS_ADMIN_SMTP_HOST", "").strip()
@@ -1768,6 +1842,73 @@ class Store:
             if len(events) >= limit:
                 break
         return events
+
+    def active_sessions(self, now: datetime | None = None) -> dict[str, dict[str, Any]]:
+        """Reconstruct currently-online VPN sessions from the FreeRADIUS
+        accounting detail file. A session counts as online when its most recent
+        accounting record is not a Stop and is newer than the staleness window,
+        so a lost Stop cannot pin a user online forever. Keyed by username."""
+        if now is None:
+            now = datetime.now()
+        try:
+            with self.accounting_detail_path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - 524288))
+                text = handle.read().decode("utf-8", errors="replace")
+        except OSError:
+            return {}
+        try:
+            window = timedelta(
+                seconds=int(runtime_setting("RADIUS_ADMIN_ACCT_STALE_SECONDS", "1800"))
+            )
+        except ValueError:
+            window = timedelta(seconds=1800)
+        records: dict[str, dict[str, Any]] = {}
+        for block in text.split("\n\n"):
+            lines = [line for line in block.splitlines() if line.strip()]
+            if not lines:
+                continue
+            attributes: dict[str, str] = {}
+            for line in lines[1:]:
+                key, separator, value = line.strip().partition("=")
+                if separator:
+                    attributes[key.strip()] = value.strip().strip('"')
+            session_id = attributes.get("Acct-Session-Id")
+            if not session_id:
+                continue
+            try:
+                stamp = datetime.strptime(lines[0].strip(), "%a %b %d %H:%M:%S %Y")
+            except ValueError:
+                stamp = None
+            records[session_id] = {"stamp": stamp, "attributes": attributes}
+        online: dict[str, dict[str, Any]] = {}
+        for record in records.values():
+            attributes = record["attributes"]
+            if attributes.get("Acct-Status-Type") == "Stop":
+                continue
+            stamp = record["stamp"]
+            if stamp is not None and now - stamp > window:
+                continue
+            username = attributes.get("User-Name")
+            if not username:
+                continue
+            try:
+                seconds = int(attributes.get("Acct-Session-Time") or 0)
+            except ValueError:
+                seconds = 0
+            existing = online.get(username)
+            if existing and existing["stamp"] and stamp and existing["stamp"] >= stamp:
+                continue
+            online[username] = {
+                "ip": attributes.get("Framed-IP-Address", ""),
+                "since": stamp.isoformat() if stamp else None,
+                "seconds": seconds,
+                "stamp": stamp,
+            }
+        for entry in online.values():
+            entry.pop("stamp", None)
+        return online
 
     def list_backups(self, limit: int = 20) -> list[dict[str, Any]]:
         if not self.backup_dir.exists():

@@ -10,11 +10,12 @@ Items are checked off as they ship.
    should replicate the backups, encrypted, to a separate host with a
    write-only key so a disk failure does not lose data and its snapshots at
    once.
-2. [ ] **Monitoring and alerting.** Nothing watches `/healthz`, the
-   reconciliation timer or the certificate lifetime. Add external monitoring
-   (health endpoint, cert expiry, reconcile result) with a notification path.
-3. [ ] **Template render smoke test in CI.** Render the dashboard with a
-   representative context so a bad template change cannot ship a 500.
+2. [x] **Monitoring and alerting.** The reconciler emails the administrator when
+   the service degrades (a service down, invalid configuration, the certificate
+   within the warning window, or low disk) and when it recovers, once per state
+   change. External box-down monitoring can still be layered on separately.
+3. [x] **Template render smoke test in CI.** The dashboard is rendered with a
+   varied, edge-case context so a bad template change cannot ship a 500.
 4. [ ] **Versioned release script.** Automate the controlled deployment
    sequence (dated backup, install, compile, validate, restart, health check)
    as a reviewable script instead of manual steps.
@@ -35,16 +36,16 @@ Items are checked off as they ship.
 
 ## Features
 
-10. [ ] **Live "online now".** RADIUS accounting (router `aaa accounting`,
-    firewall rule, FreeRADIUS listener) feeding a dashboard count plus assigned
-    IP and session duration on the user record.
+10. [x] **Live "online now".** RADIUS accounting feeds an "online now" count, an
+    Online badge per connected user, and the assigned IP and session duration
+    on the user record. Ships the RadiusPilot side plus the gateway, firewall
+    and FreeRADIUS configuration to enable it.
 11. [x] **Activity filtered by user.** Jump from a user's row to the audit and
     authentication history scoped to that account.
 12. [x] **Expiry warning emails.** Reuse the optional SMTP integration to warn
     a set number of days before an account expires.
-13. [ ] **QR codes for invitations.** Show the one-time invitation link as a QR
-    code for direct scanning, rendered locally with no CDN. (Needs a QR
-    encoder — a small vendored JS library or a pure-Python dependency.)
+13. [x] **QR codes for invitations.** Show the one-time invitation link as a QR
+    code for direct scanning, rendered locally with segno (no CDN).
 14. [ ] **Side-drawer user management.** An alternative to the inline
     contextual actions once the user count grows. (Deferred: the inline
     contextual actions already cover this well.)
