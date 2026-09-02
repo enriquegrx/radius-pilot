@@ -79,6 +79,7 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .duo-api-form { align-items: end; display: grid; gap: .75rem; grid-template-columns: 1fr 1fr 1fr auto; }
 .duo-api-submit { padding-bottom: .1rem; }
 .detail-value { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
+.detail-note { white-space: pre-line; }
 .user-detail .btn-sm { font-size: .75rem; padding: .15rem .55rem; }
 .user-detail-actions { border-top: 1px solid rgba(98,105,118,.14); display: flex; flex-wrap: wrap; gap: .5rem; grid-column: 1 / -1; padding-top: .75rem; }
 .detail-rules { display: flex; flex-direction: column; gap: .25rem; list-style: none; margin: 0; padding: 0; }

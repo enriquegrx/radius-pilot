@@ -64,6 +64,8 @@ OPERATIONS = {
     "set-duo",
     "set-access-policy",
     "set-expiry",
+    "set-note",
+    "set-activation",
     "object-set",
     "object-delete",
     "object-import",
@@ -220,6 +222,19 @@ def is_past(value: str | None) -> bool:
     if not value:
         return False
     return datetime.fromisoformat(value).astimezone(UTC) <= datetime.now(UTC)
+
+
+def is_future(value: str | None) -> bool:
+    if not value:
+        return False
+    return datetime.fromisoformat(value).astimezone(UTC) > datetime.now(UTC)
+
+
+def clean_note(value: object) -> str:
+    note = str(value or "").replace("\r\n", "\n").strip()
+    if len(note) > 500 or any(ord(char) < 32 and char != "\n" for char in note):
+        raise AdminError("The note must be at most 500 printable characters.")
+    return note
 
 
 def clean_reason(value: object) -> str:
@@ -545,6 +560,9 @@ class Store:
                     "updated_at",
                 )
             }
+            public["note"] = item.get("note", "")
+            public["activates_at"] = item.get("activates_at")
+            public["scheduled"] = bool(item["enabled"]) and is_future(item.get("activates_at"))
             public["effective_enabled"] = self._effective_enabled(item)
             public["effective_duo_required"] = self._effective_duo_required(item)
             public["last_auth"] = auth.get(item["username"])
@@ -962,6 +980,10 @@ class Store:
                 )
                 reason = clean_reason(payload.get("duo_bypass_reason"))
                 expires_at = clean_optional_time(payload.get("expires_at"), "account expiry")
+                activates_at = clean_optional_time(
+                    payload.get("activates_at"), "activation time"
+                )
+                note = clean_note(payload.get("note"))
                 access_policy = self._clean_policy_for_assignment(
                     payload.get("access_policy"),
                     username=username,
@@ -973,6 +995,8 @@ class Store:
                     raise AdminError("The Duo bypass expiry must be in the future.")
                 if expires_at and is_past(expires_at):
                     raise AdminError("The account expiry must be in the future.")
+                if activates_at and is_past(activates_at):
+                    raise AdminError("The activation time must be in the future.")
                 users.append(
                     {
                         "username": username,
@@ -980,6 +1004,8 @@ class Store:
                         "enabled": True,
                         "duo_required": duo_required,
                         "expires_at": expires_at,
+                        "activates_at": activates_at,
+                        "note": note,
                         "duo_bypass_until": None if duo_required else bypass_until,
                         "duo_bypass_reason": "" if duo_required else reason,
                         "access_policy": access_policy,
@@ -1053,6 +1079,17 @@ class Store:
                     if expires_at and is_past(expires_at):
                         raise AdminError("The account expiry must be in the future.")
                     user["expires_at"] = expires_at
+                    user["updated_at"] = now()
+                elif operation == "set-note":
+                    user["note"] = clean_note(payload.get("note"))
+                    user["updated_at"] = now()
+                elif operation == "set-activation":
+                    activates_at = clean_optional_time(
+                        payload.get("activates_at"), "activation time"
+                    )
+                    if activates_at and is_past(activates_at):
+                        raise AdminError("The activation time must be in the future.")
+                    user["activates_at"] = activates_at
                     user["updated_at"] = now()
                 elif operation == "set-access-policy":
                     user["access_policy"] = self._clean_policy_for_assignment(
@@ -1301,6 +1338,10 @@ class Store:
                 user["duo_bypass_reason"] = ""
                 user["updated_at"] = now()
                 changes.append(f"expired Duo bypass {user['username']}")
+            if user.get("activates_at") and is_past(user["activates_at"]):
+                user["activates_at"] = None
+                user["updated_at"] = now()
+                changes.append(f"activated scheduled account {user['username']}")
         changes.extend(self._expiry_warnings(data))
         expected_authorize = self._render(data)
         managed_files_changed = expected_authorize.encode() != self.authorize_path.read_bytes()
@@ -1498,7 +1539,11 @@ class Store:
 
     @staticmethod
     def _effective_enabled(user: dict[str, Any]) -> bool:
-        return bool(user["enabled"]) and not is_past(user.get("expires_at"))
+        return (
+            bool(user["enabled"])
+            and not is_past(user.get("expires_at"))
+            and not is_future(user.get("activates_at"))
+        )
 
     @staticmethod
     def _effective_duo_required(user: dict[str, Any]) -> bool:
@@ -2602,6 +2647,8 @@ def main() -> int:
             "set-duo",
             "set-access-policy",
             "set-expiry",
+            "set-note",
+            "set-activation",
             "object-set",
             "object-delete",
             "object-import",

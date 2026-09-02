@@ -424,6 +424,26 @@ def sessions_json(request: Request):
     }
 
 
+@app.post("/users/{username}/note")
+def set_user_note(
+    username: str, request: Request, csrf: str = Form(), note: str = Form(default="")
+):
+    return mutate(request, csrf, "set-note", {"username": username, "note": note})
+
+
+@app.post("/users/{username}/activation")
+def set_user_activation(
+    username: str, request: Request, csrf: str = Form(), activates_at: str = Form(default="")
+):
+    try:
+        activation_time = utc_form_time(activates_at)
+    except HelperError as exc:
+        return redirect(request, str(exc), "danger", "users")
+    return mutate(
+        request, csrf, "set-activation", {"username": username, "activates_at": activation_time}
+    )
+
+
 @app.post("/users/{username}/disconnect")
 def disconnect_user(username: str, request: Request, csrf: str = Form()):
     admin = require_admin(request)
@@ -605,6 +625,8 @@ def create_user(
     panel_password: str = Form(default=""),
     access_mode: str = Form(default="full"),
     access_rules: str = Form(default="[]"),
+    activates_at: str = Form(default=""),
+    note: str = Form(default=""),
 ):
     try:
         admin = require_admin(request)
@@ -612,6 +634,7 @@ def create_user(
             return admin
         check_csrf(request, csrf)
         account_expiry = utc_form_time(expires_at)
+        activation_time = utc_form_time(activates_at)
         bypass_expiry = utc_form_time(duo_bypass_until)
         access_policy = access_policy_payload(access_mode, access_rules)
     except HelperError as exc:
@@ -647,6 +670,8 @@ def create_user(
         "password": password,
         "duo_required": duo_required,
         "expires_at": account_expiry,
+        "activates_at": activation_time,
+        "note": note,
         "duo_bypass_until": bypass_expiry,
         "duo_bypass_reason": duo_bypass_reason,
         "panel_access": panel_access,

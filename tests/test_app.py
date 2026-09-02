@@ -269,6 +269,9 @@ def _rich_list_payload() -> dict:
                 ),
                 "duo_bypass_until": None,
                 "duo_bypass_reason": "",
+                "note": "Accounting laptop",
+                "activates_at": None,
+                "scheduled": False,
                 "last_auth": {"status": "Allow", "timestamp": "2026-09-02T07:00:00+00:00"},
                 "panel_access": True,
                 "duo_enrollment_active": True,
@@ -462,6 +465,9 @@ def test_dashboard_render_smoke(monkeypatch) -> None:
         "Recent connections",
         "5.0 MB",
         'data-row-action="disconnect"',
+        'data-row-action="note"',
+        'data-row-action="activation"',
+        "Accounting laptop",
     ):
         assert marker in response.text, marker
 

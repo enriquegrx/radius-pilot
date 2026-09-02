@@ -340,6 +340,18 @@
         field.innerHTML = `<label class="form-label" for="action-input">Account expiry</label><input class="form-control" id="action-input" name="expires_at" type="datetime-local" value="${localDateTime(data.expiresAt)}"><small class="form-hint">Leave empty to remove the expiry.</small>`;
         form.action = `/users/${encode(user)}/expiry`;
         submit.textContent = "Save expiry";
+      } else if (action === "activation") {
+        title.textContent = `Schedule activation for ${user}`;
+        description.textContent = "The account stays inactive until this time, then activates automatically. Leave empty to activate now.";
+        field.innerHTML = `<label class="form-label" for="action-input">Activate at</label><input class="form-control" id="action-input" name="activates_at" type="datetime-local" value="${localDateTime(data.activatesAt)}"><small class="form-hint">Must be in the future.</small>`;
+        form.action = `/users/${encode(user)}/activation`;
+        submit.textContent = "Save schedule";
+      } else if (action === "note") {
+        title.textContent = `Note for ${user}`;
+        description.textContent = "An internal note, never shown to the user.";
+        field.innerHTML = `<label class="form-label" for="action-input">Note</label><textarea class="form-control" id="action-input" name="note" rows="3" maxlength="500">${escapeHtml(data.note || "")}</textarea>`;
+        form.action = `/users/${encode(user)}/note`;
+        submit.textContent = "Save note";
       } else if (action === "access") {
         let policy = {mode: "full", rules: []};
         try { policy = JSON.parse(data.accessPolicy || "{}"); } catch (_error) { /* fail closed in the helper */ }

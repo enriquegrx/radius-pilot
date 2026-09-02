@@ -243,6 +243,76 @@ def test_legacy_state_migrates_missing_access_policy_to_full(store: Store) -> No
     }
 
 
+def test_note_is_stored_and_shown(store: Store) -> None:
+    store.mutate(
+        "create",
+        {
+            "username": "noted",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "note": "  Line one\r\nLine two  ",
+        },
+    )
+    store.mutate("set-note", {"username": "noted", "note": "Updated note"})
+    public = {u["username"]: u for u in store.public_list()["users"]}
+    assert public["noted"]["note"] == "Updated note"
+
+
+def test_note_length_is_capped(store: Store) -> None:
+    with pytest.raises(AdminError, match="500"):
+        store.mutate(
+            "create",
+            {
+                "username": "toolong",
+                "password": "a-safe-password-2026",
+                "duo_required": True,
+                "note": "x" * 501,
+            },
+        )
+
+
+def test_scheduled_activation_keeps_account_inactive_until_due(store: Store) -> None:
+    future = (datetime.now(UTC) + timedelta(hours=2)).isoformat(timespec="seconds")
+    store.mutate(
+        "create",
+        {
+            "username": "scheduled",
+            "password": "a-safe-password-2026",
+            "duo_required": True,
+            "activates_at": future,
+        },
+    )
+    public = {u["username"]: u for u in store.public_list()["users"]}
+    assert public["scheduled"]["scheduled"] is True
+    assert public["scheduled"]["effective_enabled"] is False
+    # Not yet effective, so it is absent from the generated authorize file.
+    assert "scheduled" not in store.authorize_path.read_text()
+
+
+def test_reconcile_activates_a_scheduled_account_when_due(store: Store) -> None:
+    data = json.loads(store.state_path.read_text())
+    past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat(timespec="seconds")
+    data["users"][0]["activates_at"] = past
+    store.state_path.write_text(json.dumps(data))
+    changes = store.reconcile()
+    assert any("activated scheduled account" in c for c in changes)
+    assert json.loads(store.state_path.read_text())["users"][0]["activates_at"] is None
+
+
+def test_activation_time_must_be_future(store: Store) -> None:
+    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="seconds")
+    with pytest.raises(AdminError, match="future"):
+        store.mutate(
+            "create",
+            {
+                "username": "late",
+                "password": "a-safe-password-2026",
+                "duo_required": True,
+                "activates_at": past,
+            },
+        )
+
+
 def test_password_only_user_gets_managed_duo_exemption(store: Store) -> None:
     store.mutate(
         "create",
