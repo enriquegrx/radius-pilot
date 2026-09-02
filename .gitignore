@@ -10,3 +10,6 @@ build/
 *.egg-info/
 .DS_Store
 .env
+
+# Site-local notes with real addressing — never commit
+docs/*.local.md
