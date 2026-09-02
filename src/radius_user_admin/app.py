@@ -512,6 +512,19 @@ def set_user_note(
     return mutate(request, csrf, "set-note", {"username": username, "note": note})
 
 
+@app.post("/users/{username}/device-admin")
+def set_device_admin_route(
+    username: str, request: Request, csrf: str = Form(), device_admin: str = Form(default="")
+):
+    return mutate(
+        request,
+        csrf,
+        "set-device-admin",
+        {"username": username, "device_admin": bool(device_admin)},
+        anchor="users",
+    )
+
+
 @app.post("/users/{username}/activation")
 def set_user_activation(
     username: str, request: Request, csrf: str = Form(), activates_at: str = Form(default="")

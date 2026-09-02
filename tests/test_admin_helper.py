@@ -74,6 +74,7 @@ port=1812
         monitor_path=tmp_path / "state/monitor.json",
         geo_settings_path=tmp_path / "state/geo.json",
         geo_compiled_path=tmp_path / "state/geo-policy.json",
+        device_admin_path=tmp_path / "state/device-admin-authorize",
         runner=Runner(),
     )
     result.bootstrap()
@@ -1223,6 +1224,32 @@ def test_session_history_orders_and_marks_active(store: Store) -> None:
     assert [h["session_id"] for h in history] == ["NEW", "OLD"]
     assert history[0]["active"] is True
     assert history[1]["active"] is False
+
+
+def test_device_admin_role_and_render(store: Store) -> None:
+    store.mutate(
+        "create",
+        {"username": "netadmin", "password": "a-long-password", "duo_required": True},
+    )
+    store.mutate(
+        "create",
+        {"username": "vpn-only", "password": "another-long-pass", "duo_required": True},
+    )
+    # Granting device admin regenerates the isolated device-admin authorize file.
+    store.mutate("set-device-admin", {"username": "netadmin", "device_admin": True})
+    content = store.device_admin_path.read_text()
+    assert "netadmin NT-Password := 0x" in content
+    assert 'Cisco-AVPair = "shell:priv-lvl=15"' in content
+    assert "vpn-only" not in content  # not a device admin
+    # The VPN authorize file is untouched by the device-admin role.
+    assert "shell:priv-lvl" not in store.authorize_path.read_text()
+    # public_list exposes the flag.
+    users = {u["username"]: u for u in store.public_list()["users"]}
+    assert users["netadmin"]["device_admin"] is True
+    assert users["vpn-only"]["device_admin"] is False
+    # Revoking removes the entry.
+    store.mutate("set-device-admin", {"username": "netadmin", "device_admin": False})
+    assert "netadmin" not in store.device_admin_path.read_text()
 
 
 def test_geo_settings_evaluation_and_override(store: Store) -> None:

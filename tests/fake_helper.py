@@ -25,6 +25,7 @@ elif sys.argv[1] == "list":
                         "duo_enrollment_active": True,
                         "expires_at": None,
                         "panel_access": True,
+                        "device_admin": True,
                         "credential_scheme": "nt-hash",
                         "access_policy": {"mode": "full", "rules": []},
                         "access_summary": "Full access",
@@ -281,6 +282,7 @@ elif sys.argv[1] == "invite-accept":
         )
     )
 elif sys.argv[1] == "panel-status":
-    print(json.dumps({"ok": True, "panel_access": True, "role": "admin"}))
+    print(json.dumps({"ok": True, "panel_access": True,
+                        "device_admin": True, "role": "admin"}))
 else:
     print(json.dumps({"ok": True}))

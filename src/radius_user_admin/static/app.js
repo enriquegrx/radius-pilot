@@ -396,6 +396,14 @@
         field.innerHTML = `<label class="form-label" for="action-input">Role</label><select class="form-select" id="action-input" name="role"><option value="admin" ${auditor ? "" : "selected"}>Administrator — full control</option><option value="auditor" ${auditor ? "selected" : ""}>Auditor — read-only</option></select>`;
         form.action = `/users/${encode(user)}/panel-role`;
         submit.textContent = "Save role";
+      } else if (action === "device-admin") {
+        const enable = data.deviceAdmin !== "true";
+        title.textContent = `${enable ? "Grant" : "Revoke"} device administration for ${user}?`;
+        description.textContent = enable ? "The account can then log in to the CLI (SSH/console) of RADIUS-configured routers and switches at privilege 15, using its existing credential. It is written to a separate device-admin file; the VPN policy is unchanged." : "The account keeps its VPN access; it is removed from the device-admin file on the next regeneration.";
+        field.innerHTML = `<div class="change-summary ${enable ? "" : "danger"}"><span>Device administration</span><strong>${enable ? "Add device admin (priv 15)" : "Remove device admin"}</strong></div><input type="hidden" name="device_admin" value="${enable ? "1" : ""}">`;
+        form.action = `/users/${encode(user)}/device-admin`;
+        submit.textContent = enable ? "Grant device admin" : "Revoke device admin";
+        if (!enable) submit.className = "btn btn-warning";
       } else if (action === "geo") {
         let policy = {}; try { policy = JSON.parse(data.geo || "{}"); } catch (e) {}
         let regions = {}; try { regions = JSON.parse(document.body.dataset.geoRegions || "{}"); } catch (e) {}
