@@ -69,6 +69,10 @@ def expand_allowed(policy: dict | None) -> set[str]:
 def decide(country: str | None, allowed: set[str], fail_open: bool) -> str:
     """Classify one connection. `country` is an ISO-3166 alpha-2 code or None
     when the client IP could not be located (or is private/LAN)."""
+    if not allowed:
+        # No allow-list configured means no restriction — never block. This keeps
+        # an unset or empty policy a safe no-op instead of locking everyone out.
+        return ALLOW
     if not country:
         return UNKNOWN_ALLOW if fail_open else UNKNOWN_DENY
     return ALLOW if country.strip().upper() in allowed else DENY

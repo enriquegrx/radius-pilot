@@ -36,6 +36,13 @@ def test_decide_allow_deny_and_unknown() -> None:
     assert gp.decide(None, allowed, fail_open=False) == gp.UNKNOWN_DENY
 
 
+def test_empty_allowlist_is_a_safe_no_op() -> None:
+    # No configured countries means no restriction — never block anyone.
+    assert gp.decide("US", set(), fail_open=True) == gp.ALLOW
+    assert gp.decide("US", set(), fail_open=False) == gp.ALLOW
+    assert gp.decide(None, set(), fail_open=False) == gp.ALLOW
+
+
 def test_is_block_only_for_deny_decisions() -> None:
     assert gp.is_block(gp.DENY)
     assert gp.is_block(gp.UNKNOWN_DENY)
