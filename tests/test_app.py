@@ -434,6 +434,8 @@ def test_dashboard_render_smoke(monkeypatch) -> None:
         "reset-password",
         "Online now",
         ">Online<",
+        'value="online"',
+        'data-filter-online="online"',
     ):
         assert marker in response.text, marker
 

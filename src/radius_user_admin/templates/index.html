@@ -6,7 +6,7 @@
     <meta name="robots" content="noindex,nofollow">
     <title>RadiusPilot</title>
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-1">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-2">
   </head>
   <body data-custom-access-enabled="{{ 'true' if custom_access_enabled else 'false' }}" data-access-objects="{{ access_objects | map(attribute='name') | list | tojson | forceescape }}">
     <div class="page">
@@ -53,13 +53,13 @@
             <div class="card user-card">
               <div class="card-header user-card-header">
                 <div><h2 class="card-title mb-1">VPN users</h2><div class="text-secondary">Passwords are never displayed after creation.</div></div>
-                <div class="user-tools"><span class="user-count text-secondary small" id="user-count" aria-live="polite"></span><label class="visually-hidden" for="user-search">Search users</label><input class="form-control" id="user-search" type="search" placeholder="Search users…"><label class="visually-hidden" for="user-filter">Filter users</label><select class="form-select" id="user-filter"><option value="all">All users</option><option value="enabled">Enabled</option><option value="blocked">Blocked</option><option value="duo">Duo Push</option><option value="password">Password only</option></select></div>
+                <div class="user-tools"><span class="user-count text-secondary small" id="user-count" aria-live="polite"></span><label class="visually-hidden" for="user-search">Search users</label><input class="form-control" id="user-search" type="search" placeholder="Search users…"><label class="visually-hidden" for="user-filter">Filter users</label><select class="form-select" id="user-filter"><option value="all">All users</option>{% if accounting_enabled %}<option value="online">Online now</option>{% endif %}<option value="enabled">Enabled</option><option value="blocked">Blocked</option><option value="duo">Duo Push</option><option value="password">Password only</option></select></div>
               </div>
               <div class="table-responsive"><table class="table table-vcenter card-table" id="users-table">
                 <thead><tr><th>User</th><th>Status</th><th>Network access</th><th>Authentication</th><th>Last sign-in</th><th>Expires</th><th class="w-1"><span class="visually-hidden">Actions</span></th></tr></thead>
                 <tbody>
                   {% for user in users %}
-                  <tr data-user-row tabindex="0" aria-expanded="false" data-username="{{ user.username }}" data-filter-status="{{ 'enabled' if user.effective_enabled else 'blocked' }}" data-filter-duo="{{ 'duo' if user.effective_duo_required else 'password' }}" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}" data-panel-access="{{ 'true' if user.panel_access else 'false' }}" data-duo-enrollment-active="{{ 'true' if user.duo_enrollment_active else 'false' }}" data-credential-scheme="{{ user.credential_scheme }}" data-expires-at="{{ user.expires_at or '' }}" data-bypass-until="{{ user.duo_bypass_until or '' }}" data-bypass-reason="{{ user.duo_bypass_reason }}" data-access-policy="{{ user.access_policy | tojson | forceescape }}" data-access-summary="{{ user.access_summary }}" data-custom-access-eligible="{{ 'true' if user.custom_access_eligible else 'false' }}">
+                  <tr data-user-row tabindex="0" aria-expanded="false" data-username="{{ user.username }}" data-filter-status="{{ 'enabled' if user.effective_enabled else 'blocked' }}" data-filter-duo="{{ 'duo' if user.effective_duo_required else 'password' }}" data-filter-online="{{ 'online' if user.session else '' }}" data-user="{{ user.username }}" data-enabled="{{ 'true' if user.enabled else 'false' }}" data-duo-required="{{ 'true' if user.duo_required else 'false' }}" data-panel-access="{{ 'true' if user.panel_access else 'false' }}" data-duo-enrollment-active="{{ 'true' if user.duo_enrollment_active else 'false' }}" data-credential-scheme="{{ user.credential_scheme }}" data-expires-at="{{ user.expires_at or '' }}" data-bypass-until="{{ user.duo_bypass_until or '' }}" data-bypass-reason="{{ user.duo_bypass_reason }}" data-access-policy="{{ user.access_policy | tojson | forceescape }}" data-access-summary="{{ user.access_summary }}" data-custom-access-eligible="{{ 'true' if user.custom_access_eligible else 'false' }}">
                     <td><div class="d-flex align-items-center gap-3"><span class="row-caret" aria-hidden="true"></span><span class="avatar avatar-sm user-avatar">{{ user.username[:2] | upper }}</span><div><div class="fw-semibold">{{ user.username }}</div><div class="text-secondary small">Updated {{ user.updated_at[:10] }}</div></div></div></td>
                     <td>{% if user.effective_enabled %}<span class="badge bg-green-lt">Enabled</span>{% else %}<span class="badge bg-red-lt">Blocked</span>{% endif %}{% if user.panel_access %} <span class="badge bg-orange-lt">Panel admin</span>{% endif %}{% if user.session %} <span class="badge bg-green" title="Connected{% if user.session.ip %} from {{ user.session.ip }}{% endif %}">Online</span>{% endif %}</td>
                     <td><span class="badge {{ 'bg-blue-lt' if user.access_policy.mode == 'full' else 'bg-purple-lt' }}">{{ user.access_summary }}</span></td>
@@ -235,6 +235,6 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-danger">Delete object</button></div>
     </form></dialog>
 
-    <script src="{{ url_for('static', path='app.js') }}?v=20260902-1"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260902-2"></script>
   </body>
 </html>

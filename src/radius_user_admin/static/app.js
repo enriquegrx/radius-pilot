@@ -89,7 +89,7 @@
     let visible = 0;
     rows.forEach((row) => {
       const matchesQuery = row.dataset.username.includes(query);
-      const matchesFilter = selected === "all" || row.dataset.filterStatus === selected || row.dataset.filterDuo === selected;
+      const matchesFilter = selected === "all" || row.dataset.filterStatus === selected || row.dataset.filterDuo === selected || row.dataset.filterOnline === selected;
       row.hidden = !(matchesQuery && matchesFilter);
       if (row.hidden) collapseRow(row);
       if (!row.hidden) visible += 1;
