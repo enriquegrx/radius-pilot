@@ -305,7 +305,7 @@
     }
     setText("geo-wouldblock", d.would_block_count || 0);
     var note = byId("geo-note");
-    if (note) note.textContent = d.geolite_csv ? "" : "Worldwide coverage needs a GeoLite2 database (RADIUS_ADMIN_GEOIP_CSV); without it most public IPs read as unlocated.";
+    if (note) note.textContent = d.geolite_ready ? "Worldwide country database active." : "Worldwide coverage needs a GeoLite2/DB-IP database; without it most public IPs read as unlocated.";
     var feed = byId("geo-feed");
     if (feed) {
       var rows = (d.events || []).slice(0, 25).map(function (e) {

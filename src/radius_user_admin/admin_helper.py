@@ -2810,7 +2810,10 @@ class Store:
             "online": online,
             "would_block_count": sum(1 for event in events if event["blocked"]),
             "geoip_ready": geoip is not None,
-            "geolite_csv": bool(runtime_setting("RADIUS_ADMIN_GEOIP_CSV", "").strip()),
+            "geolite_ready": bool(
+                geoip
+                and (geoip._mmdb_path() or runtime_setting("RADIUS_ADMIN_GEOIP_CSV", "").strip())
+            ),
         }
 
     def compile_geo_policy(self) -> None:

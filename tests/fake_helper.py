@@ -243,7 +243,7 @@ elif sys.argv[1] == "geo":
                 "online": [],
                 "would_block_count": 2,
                 "geoip_ready": True,
-                "geolite_csv": False,
+                "geolite_ready": True,
             }
         )
     )

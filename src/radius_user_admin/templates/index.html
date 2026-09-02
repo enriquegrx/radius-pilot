@@ -9,7 +9,7 @@
     <link rel="icon" href="{{ url_for('static', path='branding/radiuspilot.ico') }}" sizes="any">
     <link rel="apple-touch-icon" href="{{ url_for('static', path='branding/apple-touch-icon.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-10">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-11">
   </head>
   <body data-custom-access-enabled="{{ 'true' if custom_access_enabled else 'false' }}" data-access-objects="{{ access_objects | map(attribute='name') | list | tojson | forceescape }}" data-geo-regions="{{ (geo.regions or {}) | tojson | forceescape }}">
     <div class="page">
@@ -304,7 +304,7 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-danger">Delete object</button></div>
     </form></dialog>
 
-    <script src="{{ url_for('static', path='app.js') }}?v=20260902-10"></script>
-    <script src="{{ url_for('static', path='charts.js') }}?v=20260902-10"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260902-11"></script>
+    <script src="{{ url_for('static', path='charts.js') }}?v=20260902-11"></script>
   </body>
 </html>
