@@ -312,3 +312,90 @@ AnyConnect, and verify on the router that the allowed destination works and a
 denied one does not (`show crypto session detail` shows the session; the
 downloaded ACL entries appear in the reply). A pushed route is not a security
 boundary — only the ACL is.
+
+## 10. Device administration: console and SSH with Duo Push
+
+Console/VTY logins to the routers and switches themselves can authenticate
+against the same accounts, with the same Duo Push. The pieces are deliberately
+isolated from the VPN path; see
+[docs/ports-and-services.md](ports-and-services.md) for how the ports fit
+together. Roll it out in **two stages** — prove the RADIUS login and the local
+fallback first, then add the Push — and pilot on one device before touching the
+rest.
+
+### Server side
+
+1. **Mark the accounts.** In the console, grant *device admin* to each account
+   that may log in to devices (the account needs an NT hash — new and reset
+   passwords already do). RadiusPilot writes
+   `/etc/freeradius/3.0/mods-config/files/device-admin/authorize` (NT hash plus
+   `Service-Type` and `shell:priv-lvl=15`) on every change and reconcile.
+   **Restart FreeRADIUS after changing who holds the role** — the `files`
+   module caches the file.
+2. **FreeRADIUS.** Install `deploy/freeradius-device-admin.conf` as
+   `sites-available/device-admin`, enable it, and add its clients: the devices
+   themselves for stage one, and the Duo proxy's addresses for stage two. It
+   listens on **1814** and verifies the device's PAP login against the same NT
+   hash MS-CHAPv2 uses for the VPN. `freeradius -C`, then restart.
+3. **Duo proxy (stage two).** Add a second integration that fronts the virtual
+   server with the Push — the `[radius_client1]` / `[radius_server_auto1]` pair
+   shown in the README, listening on **1815**, with
+   `pass_through_attr_names=Cisco-AVPair` (the privilege level rides that
+   attribute) and `failmode=safe` (a Duo-cloud outage must not lock admins out
+   of the network). Back up `authproxy.cfg` first; restart the proxy and check
+   it still listens on both 1812 (VPN) and 1815.
+4. **Firewall.** Allow `1815/udp` (and `1814/udp` while devices go direct in
+   stage one) from each device's management address.
+
+### Each device
+
+Use **named** method lists — never edit the `default` lists or the VPN AAA —
+keep `local` as the break-glass, and give the Push time:
+
+```
+radius server RADIUSPILOT-ADMIN
+ address ipv4 <radius01> auth-port 1815 acct-port 0
+ key <device-to-proxy secret>
+ timeout 60
+ retransmit 1
+aaa group server radius RADIUSPILOT-ADMIN-RADIUS
+ server name RADIUSPILOT-ADMIN
+aaa authentication login RADIUSPILOT-ADMIN group RADIUSPILOT-ADMIN-RADIUS local
+aaa authorization exec RADIUSPILOT-ADMIN group RADIUSPILOT-ADMIN-RADIUS local if-authenticated
+line con 0
+ login authentication RADIUSPILOT-ADMIN
+ authorization exec RADIUSPILOT-ADMIN
+line vty 0 15
+ login authentication RADIUSPILOT-ADMIN
+ authorization exec RADIUSPILOT-ADMIN
+```
+
+(For stage one, point `auth-port` at 1814 with the FreeRADIUS device client's
+secret instead; everything else is identical.)
+
+Apply it under a safety net, schedule the reload **on its own line first** —
+pasting `reload in` together with configuration eats the confirmation prompt
+and silently drops the rest:
+
+1. `reload in 15` (confirm it), then paste the block.
+2. Verify it landed: `show run | include RADIUSPILOT-ADMIN`.
+3. Test without saving: `test aaa group RADIUSPILOT-ADMIN-RADIUS <user>
+   <password> new-code` and a real SSH from a **new** session — enter the
+   password, wait for the Push, approve, and check `show privilege` says 15.
+4. Only then `reload cancel` and `write memory`. If anything went wrong, the
+   device reverts to the saved configuration by itself, and the lines' `local`
+   method keeps the break-glass account working throughout.
+
+### What to expect
+
+- A **reject never falls back to `local`** — only an unreachable RADIUS does.
+  Wrong password means denied, as it should.
+- An account that is not enrolled in Duo is denied by the Push stage; enroll it
+  from the console first (or keep it on the stage-one port if it is an
+  automation account that cannot Push).
+- `timeout 60` is required: the IOS default of ~5 s expires long before a human
+  can approve the Push.
+- The Duo proxy's `authevents.log` records both stages — primary and Push — per
+  login, and feeds the console's authentication history.
+- RADIUS gives you login and privilege level. Per-command authorization and
+  command accounting need TACACS+, which FreeRADIUS does not speak.

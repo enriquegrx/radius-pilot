@@ -15,9 +15,11 @@ and the controls to do something about it.
 RadiusPilot puts Duo two-factor authentication in front of a Cisco ISR's remote
 access without the usual pain. People connect with AnyConnect over IKEv2, the
 router checks their password against FreeRADIUS, Duo asks for the Push, and a
-small web console keeps the accounts and their access under control. It runs the
-whole thing with **no database** — just root-owned JSON state and the generated
-FreeRADIUS `authorize` file.
+small web console keeps the accounts and their access under control. The same
+chain can also guard **the network devices themselves**: console and SSH logins
+to your routers and switches authenticate against the same accounts, with the
+same Duo Push. It runs the whole thing with **no database** — just root-owned
+JSON state and generated FreeRADIUS `authorize` files.
 
 <p align="center">
   <img src="docs/img/screenshot-wall.png" alt="The RadiusPilot operations wall: online count, a live world map of connected sessions, a concurrent-sessions chart, the authentication path with per-component health, and a live session list" width="900">
@@ -56,6 +58,13 @@ bypasses it.
 <p align="center">
   <img src="docs/img/screenshot-geo.png" alt="The country-access card in monitor mode: a mode selector, allowed-region checkboxes, extra and removed countries, and a live feed of recent authentications with the country each resolved to and whether it would be blocked" width="900">
 </p>
+
+**Device administration.** Give an account the *device admin* role and it can
+log in to the **console or SSH of your RADIUS-configured routers and switches**
+— password plus Duo Push, landing at privilege 15 — using the same credential it
+already has. Device logins ride an isolated FreeRADIUS virtual server and a
+dedicated Duo integration, so the VPN path is never touched, and every device
+keeps a local break-glass account for the day RADIUS is unreachable.
 
 **Per-user network access.** Give each account either the gateway's normal
 full-access profile or a custom allowlist of IPv4 destinations, protocols and
@@ -178,14 +187,92 @@ Worldwide country resolution needs an offline database. Point
 (install `python3-maxminddb`). Without a database, only well-known ranges
 resolve and everything else is treated as unlocated, allowed under fail-open.
 
+## Duo on the network CLI (device administration) 🔐
+
+One click in the console gives an account the **device admin** role. RadiusPilot
+writes it — the same NT hash the VPN uses, plus `Service-Type` and
+`Cisco-AVPair = "shell:priv-lvl=15"` — to an isolated authorize file served by a
+dedicated FreeRADIUS virtual server, so device logins never touch the VPN path.
+Console and SSH logins to the devices then flow:
+
+```
+SSH / console → device → Duo Auth Proxy :1815 → FreeRADIUS device-admin :1814
+             → Duo Push 📱 → privilege 15
+```
+
+**Server side.** Install `deploy/freeradius-device-admin.conf` (the virtual
+server that answers PAP against the generated file on 1814) and add a second Duo
+Authentication Proxy integration that fronts it with the Push:
+
+```ini
+[radius_client1]
+host=192.0.2.10                 ; the FreeRADIUS device-admin listener
+port=1814
+secret=<proxy-to-freeradius secret>
+pass_through_attr_names=Cisco-AVPair
+
+[radius_server_auto1]
+ikey=...                        ; same Duo application as the VPN, or its own
+skey=...
+api_host=api-XXXXXXXX.duosecurity.com
+radius_ip_1=192.0.2.1           ; one entry per device allowed to authenticate
+radius_secret_1=<device-to-proxy secret>
+client=radius_client1
+port=1815
+failmode=safe                   ; a Duo-cloud outage must not lock admins out
+```
+
+**On each IOS/IOS-XE device**, use **named** method lists so the `default` lists
+and the VPN AAA stay untouched, keep `local` as the break-glass, and give the
+Push time to be approved:
+
+```
+radius server RADIUSPILOT-ADMIN
+ address ipv4 192.0.2.10 auth-port 1815 acct-port 0
+ key <device-to-proxy secret>
+ timeout 60
+ retransmit 1
+aaa group server radius RADIUSPILOT-ADMIN-RADIUS
+ server name RADIUSPILOT-ADMIN
+aaa authentication login RADIUSPILOT-ADMIN group RADIUSPILOT-ADMIN-RADIUS local
+aaa authorization exec RADIUSPILOT-ADMIN group RADIUSPILOT-ADMIN-RADIUS local if-authenticated
+line con 0
+ login authentication RADIUSPILOT-ADMIN
+ authorization exec RADIUSPILOT-ADMIN
+line vty 0 15
+ login authentication RADIUSPILOT-ADMIN
+ authorization exec RADIUSPILOT-ADMIN
+```
+
+Apply it under a scheduled `reload in 15`, verify from a **new** session — the
+device's `test aaa group RADIUSPILOT-ADMIN-RADIUS <user> <password> new-code` is
+the fastest end-to-end check — and only then `reload cancel` and `write memory`.
+Worth knowing:
+
+- The device sends the login as PAP; FreeRADIUS verifies it against the same NT
+  hash MS-CHAPv2 uses for the VPN, so **one credential serves both**.
+- `failmode=safe` covers a Duo-cloud outage; the lines' `local` covers a full
+  RADIUS outage. A **reject never falls back** — only unreachability does.
+- `timeout 60` on the device's `radius server` is required: the default ~5 s
+  expires before anyone can approve the Push.
+- Open the firewall for 1815/udp from each device (see `deploy/nftables.conf`),
+  and keep [docs/ports-and-services.md](docs/ports-and-services.md) as the map
+  of every port and shared secret in the chain.
+- After changing who holds the device-admin role, restart FreeRADIUS — the
+  `files` module caches the generated file.
+- RADIUS provides login and privilege level. Per-command authorization and
+  command accounting are TACACS+ territory, which FreeRADIUS does not speak.
+
 ## Configuring the Cisco ISR and FreeRADIUS 📡
 
 [docs/cisco-isr-freeradius.md](docs/cisco-isr-freeradius.md) contains the
 minimal working configuration for everything around RadiusPilot: the ISR's AAA
-and RADIUS plumbing, a complete AnyConnect-over-IKEv2 (FlexVPN) profile,
-optional Duo-protected SSH logins to the router itself, the Duo Authentication
-Proxy file, the FreeRADIUS pieces, the RADIUS accounting that powers the live
-map, and the CoA (dynamic-author) that powers the Disconnect button. It also
+and RADIUS plumbing, a complete AnyConnect-over-IKEv2 (FlexVPN) profile, the
+device-administration rollout (console/SSH logins with Duo across your routers
+and switches, including the two-stage no-Duo-first procedure), the Duo
+Authentication Proxy file, the FreeRADIUS pieces, the RADIUS accounting that
+powers the live map, and the CoA (dynamic-author) that powers the Disconnect
+button. It also
 explains the settings people most often get wrong: the long RADIUS timeout the
 Push needs, `aaa authorization user anyconnect-eap cached` (required for custom
 access policies to be enforced), periodic interim accounting (required so a
