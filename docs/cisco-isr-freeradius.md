@@ -247,14 +247,21 @@ it at the same RADIUS group:
 
 ```
 aaa accounting network ANYCONNECT-ACCT start-stop group DUO-RADIUS
+aaa accounting update periodic 1
 
 crypto ikev2 profile ANYCONNECT-EAP
  aaa accounting anyconnect-eap ANYCONNECT-ACCT
 ```
 
-The `radius server` block already sets `acct-port 1813`. Test from a second
-session before relying on it; accounting is best-effort and never blocks a
-login.
+`aaa accounting update periodic <minutes>` is **required**, not optional. With
+`start-stop` alone the gateway sends only a Start and a Stop, so a long-lived
+session has no fresh accounting between them and ages out of the staleness
+window (below) — the user connects fine but silently drops off "online now"
+after `RADIUS_ADMIN_ACCT_STALE_SECONDS`. A periodic Interim-Update (every minute
+here) keeps the session current and refreshes its data counters live. The
+setting applies to sessions established after it is configured, so reconnect an
+existing session to pick it up. The `radius server` block already sets
+`acct-port 1813`. Accounting is best-effort and never blocks a login.
 
 On `radius01`:
 
