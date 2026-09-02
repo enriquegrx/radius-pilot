@@ -30,12 +30,32 @@ IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 # Environment variable that may point at a GeoLite2-style CSV export.
 CSV_ENV_VAR = "RADIUS_ADMIN_GEOIP_CSV"
 
-# Environment variable that may point at a GeoLite2 Country/City .mmdb database.
+# Environment variable that may point at a GeoLite2/DB-IP Country .mmdb database.
 # When present it is preferred: memory-mapped lookups are cheap per call, which
 # matters for the per-authentication enforcement hook.
 MMDB_ENV_VAR = "RADIUS_ADMIN_GEOIP_MMDB"
 
+# Standard, world-readable locations searched when the env var is unset, so that
+# dropping a database in place enables it for both the console (radiusui) and the
+# FreeRADIUS hook (freerad) without any environment plumbing.
+DEFAULT_MMDB_PATHS = (
+    "/var/lib/GeoIP/dbip-country-lite.mmdb",
+    "/var/lib/GeoIP/GeoLite2-Country.mmdb",
+    "/var/lib/GeoIP/dbip-country.mmdb",
+    "/etc/freeradius/3.0/geoip-country.mmdb",
+)
+
 _mmdb_reader_cache: dict[tuple[str, float], object] = {}
+
+
+def _mmdb_path() -> str:
+    configured = os.environ.get(MMDB_ENV_VAR, "").strip()
+    if configured:
+        return configured
+    for candidate in DEFAULT_MMDB_PATHS:
+        if os.path.exists(candidate):
+            return candidate
+    return ""
 
 # RFC1918 / loopback / link-local / CGNAT (RFC6598) / IPv6 unique-local ranges.
 # These are matched explicitly instead of relying on ``ip_address.is_private``
@@ -540,7 +560,7 @@ def _mmdb_country(addr_text: str) -> str | None:
     """ISO-3166 alpha-2 country for ``addr_text`` from a GeoLite2 .mmdb, or None.
     Uses the optional ``maxminddb`` module; any failure returns None so callers
     fall back gracefully."""
-    path = os.environ.get(MMDB_ENV_VAR, "").strip()
+    path = _mmdb_path()
     if not path:
         return None
     try:
