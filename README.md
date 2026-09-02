@@ -185,6 +185,14 @@ Duo, and the router — to be applied by hand (their example files sit in
 [docs/cisco-isr-freeradius.md](docs/cisco-isr-freeradius.md)). It then prints
 the bootstrap and enable commands.
 
+Once installed, `RELEASE_TARGET=user@host [RELEASE_JUMP=user@jump]
+deploy/release.sh` ships a new version of the running console: it gates on the
+local tests and linter, uploads the source, backs up what is live, swaps it in,
+records the version, compiles it, validates FreeRADIUS, runs a reconcile,
+restarts only the web service and health-checks it — rolling the source back
+automatically if any step fails. Authentication uses your ssh configuration; the
+target account needs sudo.
+
 Copy `deploy/environment.example` to `/etc/radius-user-admin/environment`, set a
 random session secret and the real HTTPS URL, then keep the file readable only
 by root and the service account. SMTP is optional. Without it, a newly created

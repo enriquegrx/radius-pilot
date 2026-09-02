@@ -16,21 +16,22 @@ Items are checked off as they ship.
    change. External box-down monitoring can still be layered on separately.
 3. [x] **Template render smoke test in CI.** The dashboard is rendered with a
    varied, edge-case context so a bad template change cannot ship a 500.
-4. [ ] **Versioned release script.** Automate the controlled deployment
-   sequence (dated backup, install, compile, validate, restart, health check)
-   as a reviewable script instead of manual steps.
-5. [ ] **Show the deployed version in the panel.** A footer with the running
-   commit so operators can see what is live without inspecting the host.
+4. [x] **Versioned release script.** `deploy/release.sh` gates on the tests and
+   linter, then backs up, installs, records the version, validates, reconciles,
+   restarts and health-checks the running host, rolling back on any failure.
+5. [x] **Show the deployed version in the panel.** A footer shows the running
+   version, from `RADIUS_ADMIN_VERSION` or the `VERSION` file the installer and
+   release script write with the git commit.
 6. [ ] **Key-based management access.** Replace password SSH for deployment
    with a dedicated deploy key and a source allowlist.
 
 ## Security and robustness
 
-7. [ ] **Require an explicit destination allowlist when custom access is
-   enabled.** Today an unset `RADIUS_ADMIN_POLICY_DESTINATIONS` falls back to
-   all of RFC1918; couple the feature gate to a narrowed scope.
-8. [ ] **Restore-path tests.** The backup restore flow has the least coverage
-   of the critical paths.
+7. [x] **Require an explicit destination allowlist when custom access is
+   enabled.** Custom access stays gated until `RADIUS_ADMIN_POLICY_DESTINATIONS`
+   is set explicitly, so it never compiles against all of RFC1918.
+8. [x] **Restore-path tests.** The restore flow now has tests for revert,
+   invalid names, empty snapshots and corrupt policies.
 9. [ ] **Assisted RADIUS shared-secret rotation.** Rotating the secret across
    the router, proxy and FreeRADIUS is manual and easy to get wrong.
 
