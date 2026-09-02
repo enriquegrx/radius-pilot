@@ -18,6 +18,8 @@ same FreeRADIUS-plus-Duo chain can front the router's own login as well. A
 small web console keeps the accounts under control: see who has access, add an
 account, enrol it in Duo, reset a password, block it, or remove it.
 
+![The RadiusPilot console: at-a-glance metrics including who is online now, the VPN user list with status, network access and authentication, and the reusable access objects library](docs/img/screenshot-dashboard.png)
+
 The application runs on `radius01` behind Nginx. FastAPI listens only on
 loopback; Nginx publishes HTTPS to the approved internal and VPN networks. There
 is no WAN NAT, Cloudflare Tunnel, or public admin path.
@@ -88,6 +90,12 @@ From a device on an approved LAN or connected through the Example Organization V
 <https://radius.your-domain.com>. Nginx and nftables both enforce the source-network
 allowlist.
 
+<p align="center">
+  <img src="docs/img/screenshot-login.png" alt="The RadiusPilot administrator sign-in page" width="420">
+</p>
+
+Sign in with the separate console administrator account and approve the Duo Push.
+
 ## Architecture 🧱
 
 ![RadiusPilot architecture: AnyConnect clients reach the Cisco ISR over IKEv2, the ISR authenticates through the Duo Authentication Proxy against FreeRADIUS and the Duo cloud, and the RadiusPilot console maintains the generated authorize file through a root helper](docs/img/architecture.svg)
@@ -147,7 +155,7 @@ first connection.
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest
-.venv/bin/pytest --cov=radius_user_admin --cov-fail-under=55
+.venv/bin/pytest --cov=radius_user_admin --cov-fail-under=65
 .venv/bin/ruff check .
 ```
 

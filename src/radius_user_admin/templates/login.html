@@ -20,7 +20,7 @@
           <div class="mb-3"><label class="form-label" for="username">Username</label><input class="form-control" id="username" name="username" required autocomplete="username" autofocus></div>
           <div class="mb-4"><label class="form-label" for="password">Password</label><input class="form-control" id="password" name="password" type="password" required autocomplete="current-password"></div>
           <button class="btn btn-primary w-100" id="login-submit">Sign in with Duo</button>
-          <div class="alert alert-info d-flex align-items-center gap-2 mt-3 mb-0" id="login-waiting" role="status" hidden>
+          <div class="alert alert-info mt-3 mb-0" id="login-waiting" role="status" style="display:none;align-items:center;gap:.5rem">
             <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
             <div>Check your phone — approve the Duo Push to finish signing in.</div>
           </div>
@@ -35,7 +35,7 @@
         const waiting = document.getElementById("login-waiting");
         form?.addEventListener("submit", () => {
           if (!form.checkValidity()) return;
-          waiting.hidden = false;
+          waiting.style.display = "flex";
           button.textContent = "Waiting for Duo Push…";
           setTimeout(() => { button.disabled = true; }, 0);
         });
