@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">RadiusPilot</title>
+  <circle cx="32" cy="32" r="31" fill="#f6f6f6"/>
+  <circle cx="32" cy="29" r="28" fill="#061539"/>
+  <circle cx="32" cy="29" r="21" fill="#f6f6f6"/>
+  <circle cx="32" cy="29" r="18" fill="#3f8b95"/>
+  <circle cx="32" cy="29" r="12" fill="#f6f6f6"/>
+  <path d="M 32 29 L 43 58 H 21 Z" fill="#f6f6f6"/>
+  <path d="M 32 12 L 39 37 L 32 32 L 25 37 Z" fill="#061539"/>
+  <rect x="30" y="39" width="4" height="15" fill="#3f8b95"/>
+  <circle cx="32" cy="54" r="4" fill="#3f8b95"/>
+</svg>

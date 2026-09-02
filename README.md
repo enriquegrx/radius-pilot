@@ -1,6 +1,8 @@
-# RadiusPilot 🛡️
+<p align="center">
+  <img src="logo/radiuspilot-lockup-horizontal.png" alt="RadiusPilot" width="760">
+</p>
 
-**Two-factor authentication for your Cisco ISR, the easy way.**
+<p align="center"><strong>Two-factor authentication for your Cisco ISR, the easy way.</strong></p>
 
 Ever wanted to put two-factor authentication in front of your Cisco ISR's
 console or VPN access, but never found a setup that just works? This project
