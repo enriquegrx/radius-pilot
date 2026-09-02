@@ -56,8 +56,11 @@ fi
 say "Packaging the application source ($VERSION)"
 TARBALL=$(mktemp -t rp-release.XXXXXX.tgz)
 trap 'rm -f "$TARBALL"' EXIT
-tar -czf "$TARBALL" -C "$REPO_DIR/src" \
-    --exclude='__pycache__' --exclude='*.pyc' radius_user_admin
+# COPYFILE_DISABLE stops macOS tar from adding AppleDouble ._* entries, which
+# would otherwise break compileall on the target.
+COPYFILE_DISABLE=1 tar -czf "$TARBALL" -C "$REPO_DIR/src" \
+    --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' \
+    --exclude='._*' radius_user_admin
 
 say "Uploading to $TARGET"
 $SSH "$TARGET" 'cat > /tmp/rp-release.tgz' < "$TARBALL"
@@ -85,6 +88,8 @@ rollback() {
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 tar -xzf /tmp/rp-release.tgz -C "$STAGE"
 rm -f /tmp/rp-release.tgz
+find "$STAGE" -name '._*' -delete 2>/dev/null || true
+find "$STAGE" -name '.DS_Store' -delete 2>/dev/null || true
 [ -f "$STAGE/radius_user_admin/app.py" ] || { echo "release: bad tarball" >&2; exit 1; }
 
 # 2. Back up the current source and generated authorize file.
