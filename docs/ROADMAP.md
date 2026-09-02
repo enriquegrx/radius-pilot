@@ -78,3 +78,34 @@ Items are checked off as they ship.
 19. [x] **Screenshots in the README.** The console and the sign-in page.
 20. [x] **Contributor guide and higher coverage gate.** `CONTRIBUTING.md` and a
     coverage floor raised to 65% (actual ~69%).
+
+## Resilience, security and self-service (proposed 2026-09-02)
+
+21. [ ] **Break-glass for a Duo outage.** Duo is the only second factor, so a
+    Duo cloud or Authentication Proxy outage locks everyone out of the VPN. Add
+    a sealed, single-use break-glass credential (email alert when used,
+    auto-expiring) and/or an explicit, time-boxed fail-open toggle for one
+    administrator during an incident. Highest operational risk today.
+22. [ ] **End-to-end synthetic auth canary.** The monitor proves the service is
+    up, not that the whole chain works. Have the reconcile timer run a full
+    `radclient` Access-Request against a dedicated test principal and surface
+    "last real authentication OK: N min ago" in the System card, so a silent
+    break in router → Duo proxy → FreeRADIUS → hash is caught before a user hits
+    it.
+23. [ ] **Self-service user portal.** A minimal, self-scoped page where a VPN
+    user can re-enroll in Duo (QR), change their own password (with the current
+    one), see their own sessions and usage, and download the AnyConnect profile
+    — cutting the administrator out of routine requests.
+24. [ ] **Tamper-evident audit log.** Chain a rolling hash per audit line
+    (append-only, verifiable with one command) and optionally forward to syslog,
+    so entries cannot be silently altered — without needing a database.
+25. [ ] **Access anomaly alerts.** Email when a user connects from a new IP or
+    country (from the `Calling-Station-Id` already parsed plus an offline GeoIP
+    database), or on impossible travel.
+26. [ ] **Brute-force lockout.** Count rejects in the FreeRADIUS auth log and
+    auto-disable an account after N failures, with unlock from the panel.
+27. [ ] **Router config-drift detection.** Using the existing SSH access,
+    periodically compare the ISR `aaa` / `radius` / accounting configuration
+    against the expected baseline and alert on drift.
+28. [ ] **Periodic usage report.** A weekly or monthly email/CSV: who connected,
+    how much data, and session counts.
