@@ -135,6 +135,6 @@ elif sys.argv[1] == "invite-accept":
         )
     )
 elif sys.argv[1] == "panel-status":
-    print(json.dumps({"ok": True, "panel_access": True}))
+    print(json.dumps({"ok": True, "panel_access": True, "role": "admin"}))
 else:
     print(json.dumps({"ok": True}))

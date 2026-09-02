@@ -380,7 +380,7 @@
         const enable = data.panelAccess !== "true";
         title.textContent = `${enable ? "Grant" : "Revoke"} panel access for ${user}?`;
         description.textContent = enable ? "This creates a separate console credential and requires Duo Push at every panel sign-in." : "The VPN account remains active. Revocation takes effect on the next request.";
-        field.innerHTML = `<div class="change-summary mb-3"><span>Panel role</span><strong>${enable ? "VPN user → Panel administrator" : "Panel administrator → VPN user"}</strong></div><input type="hidden" name="enabled" value="${enable}">${enable ? `<label class="form-label" for="action-input">New console password</label><div class="input-group"><input class="form-control" id="action-input" name="panel_password" type="password" data-secret required minlength="14" maxlength="128" autocomplete="new-password"><button class="btn btn-outline-secondary js-action-generate" type="button">Generate</button><button class="btn btn-outline-secondary js-action-copy" type="button">Copy</button></div><small class="form-hint">Use a different password from the VPN credential.</small>` : ""}`;
+        field.innerHTML = `<div class="change-summary mb-3"><span>Panel role</span><strong>${enable ? "VPN user → Panel administrator" : "Panel administrator → VPN user"}</strong></div><input type="hidden" name="enabled" value="${enable}">${enable ? `<div class="mb-3"><label class="form-label" for="panel-role">Role</label><select class="form-select" id="panel-role" name="role"><option value="admin">Administrator — full control</option><option value="auditor">Auditor — read-only</option></select></div><label class="form-label" for="action-input">New console password</label><div class="input-group"><input class="form-control" id="action-input" name="panel_password" type="password" data-secret required minlength="14" maxlength="128" autocomplete="new-password"><button class="btn btn-outline-secondary js-action-generate" type="button">Generate</button><button class="btn btn-outline-secondary js-action-copy" type="button">Copy</button></div><small class="form-hint">Use a different password from the VPN credential.</small>` : ""}`;
         form.action = `/users/${encode(user)}/panel`;
         submit.textContent = enable ? "Verify Duo and grant access" : "Revoke panel access";
         if (!enable) submit.className = "btn btn-warning";
@@ -389,6 +389,13 @@
           field.querySelector(".js-action-generate").addEventListener("click", () => { input.value = generatePassword(); input.type = "text"; });
           field.querySelector(".js-action-copy").addEventListener("click", async (event) => { if (input.value) { await navigator.clipboard.writeText(input.value); event.currentTarget.textContent = "Copied"; } });
         }
+      } else if (action === "panel-role") {
+        const auditor = data.panelRole === "auditor";
+        title.textContent = `Change panel role for ${user}`;
+        description.textContent = "Administrators have full control. Auditors can view everything but cannot make changes.";
+        field.innerHTML = `<label class="form-label" for="action-input">Role</label><select class="form-select" id="action-input" name="role"><option value="admin" ${auditor ? "" : "selected"}>Administrator — full control</option><option value="auditor" ${auditor ? "selected" : ""}>Auditor — read-only</option></select>`;
+        form.action = `/users/${encode(user)}/panel-role`;
+        submit.textContent = "Save role";
       } else if (action === "disconnect") {
         title.textContent = `Disconnect ${user}?`;
         description.textContent = "This asks the gateway to drop the user's live VPN session immediately. They can reconnect unless you also block the account.";

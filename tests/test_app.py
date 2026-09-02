@@ -21,7 +21,7 @@ def fake_helper(operation: str, _payload=None):
     if operation == "invite-list":
         return {"ok": True, "invitations": []}
     if operation == "panel-status":
-        return {"ok": True, "panel_access": True}
+        return {"ok": True, "panel_access": True, "role": "admin"}
     assert operation == "list"
     return {
         "ok": True,
@@ -433,7 +433,7 @@ def test_dashboard_render_smoke(monkeypatch) -> None:
                 ],
             }
         if operation == "panel-status":
-            return {"ok": True, "panel_access": True}
+            return {"ok": True, "panel_access": True, "role": "admin"}
         raise AssertionError(f"unexpected helper operation {operation}")
 
     monkeypatch.setattr(app_module, "call_helper", rich_helper)
@@ -528,6 +528,41 @@ def test_disconnect_route_forwards_to_helper(monkeypatch) -> None:
     )
     assert response.status_code == 303
     assert calls[0]["username"] == "demo-user"
+
+
+def test_auditor_cannot_make_changes(monkeypatch) -> None:
+    mutations = []
+
+    def auditor_helper(operation: str, payload=None):
+        if operation == "panel-status":
+            return {"ok": True, "panel_access": True, "role": "auditor"}
+        if operation in ("set-note", "delete", "disconnect"):
+            mutations.append(operation)
+            return {"ok": True}
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", auditor_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "auditor", "password": "test-password"},
+        follow_redirects=True,
+    )
+    # The read-only banner shows and the Add user button is hidden.
+    assert "Read-only access" in dashboard.text
+    assert 'data-dialog-open="create-modal"' not in dashboard.text
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/users/vpn-test-user/note",
+        data={"csrf": csrf, "note": "sneaky"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "auditors cannot make changes" in response.text.lower()
+    # The helper mutation was never called.
+    assert mutations == []
 
 
 def test_logout_survives_an_expired_csrf_token(monkeypatch) -> None:

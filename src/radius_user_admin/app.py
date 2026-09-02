@@ -98,6 +98,10 @@ def check_csrf(request: Request, token: str) -> None:
     expected = request.session.get("csrf", "")
     if not expected or not secrets.compare_digest(expected, token):
         raise HelperError("The form expired. Refresh the page and try again.")
+    # Read-only auditors may sign in and out but cannot make any change. Every
+    # mutating route validates CSRF, so blocking here covers them all.
+    if request.url.path != "/login" and request.session.get("role") == "auditor":
+        raise HelperError("Read-only access: auditors cannot make changes.")
 
 
 def current_admin(request: Request) -> str | None:
@@ -113,7 +117,8 @@ def current_admin(request: Request) -> str | None:
         request.state.current_admin = None
         return None
     try:
-        if not call_helper("panel-status", {"username": admin}).get("panel_access"):
+        status = call_helper("panel-status", {"username": admin})
+        if not status.get("panel_access"):
             request.session.clear()
             request.state.current_admin = None
             return None
@@ -122,8 +127,13 @@ def current_admin(request: Request) -> str | None:
         request.state.current_admin = None
         return None
     request.session["last_seen"] = time.time()
+    request.session["role"] = status.get("role", "admin")
     request.state.current_admin = str(admin)
     return request.state.current_admin
+
+
+def is_auditor(request: Request) -> bool:
+    return request.session.get("role") == "auditor"
 
 
 def require_admin(request: Request) -> str | RedirectResponse:
@@ -380,6 +390,7 @@ def index(request: Request):
             "accounting_enabled": bool(data.get("accounting_enabled")) if not error else False,
             "concurrent_count": data.get("concurrent_count", 0) if not error else 0,
             "coa_enabled": bool(data.get("coa_enabled")) if not error else False,
+            "is_auditor": is_auditor(request),
             "custom_access_enabled": bool(access_policy.get("custom_enabled")),
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
             "access_objects": access_policy.get("objects", []),
@@ -996,6 +1007,7 @@ def set_panel_access(
     csrf: str = Form(),
     enabled: bool = Form(),
     panel_password: str = Form(default=""),
+    role: str = Form(default="admin"),
 ):
     admin = require_admin(request)
     if isinstance(admin, RedirectResponse):
@@ -1020,8 +1032,18 @@ def set_panel_access(
         request,
         csrf,
         "set-panel-access",
-        {"username": username, "enabled": enabled, "panel_password": panel_password},
+        {
+            "username": username,
+            "enabled": enabled,
+            "panel_password": panel_password,
+            "role": role,
+        },
     )
+
+
+@app.post("/users/{username}/panel-role")
+def set_panel_role(username: str, request: Request, csrf: str = Form(), role: str = Form()):
+    return mutate(request, csrf, "set-panel-role", {"username": username, "role": role})
 
 
 @app.post("/users/{username}/delete")

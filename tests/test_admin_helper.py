@@ -243,6 +243,46 @@ def test_legacy_state_migrates_missing_access_policy_to_full(store: Store) -> No
     }
 
 
+def _seed_admins(store: Store, admins: list[dict]) -> None:
+    store.admin_path.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        {
+            "username": a["username"],
+            "salt": "AAAAAAAAAAAAAAAAAAAAAA==",
+            "digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "role": a.get("role", "admin"),
+            "duo_required": True,
+            "updated_at": "2026-09-01T00:00:00+00:00",
+        }
+        for a in admins
+    ]
+    store.admin_path.write_text(json.dumps({"version": 1, "admins": records}))
+
+
+def test_panel_roles_and_role_change(store: Store) -> None:
+    _seed_admins(store, [{"username": "boss"}, {"username": "watcher", "role": "auditor"}])
+    assert store.panel_admin_roles() == {"boss": "admin", "watcher": "auditor"}
+    store.set_panel_role("watcher", "admin")
+    assert store.panel_admin_roles()["watcher"] == "admin"
+
+
+def test_cannot_demote_the_last_writer(store: Store) -> None:
+    _seed_admins(store, [{"username": "boss"}, {"username": "watcher", "role": "auditor"}])
+    with pytest.raises(AdminError, match="at least one"):
+        store.set_panel_role("boss", "auditor")
+
+
+def test_cannot_revoke_the_last_writer(store: Store) -> None:
+    _seed_admins(store, [{"username": "boss"}, {"username": "watcher", "role": "auditor"}])
+    with pytest.raises(AdminError, match="write access"):
+        store._panel_access_data("boss", enabled=False)
+
+
+def test_invalid_role_is_rejected(store: Store) -> None:
+    with pytest.raises(AdminError, match="admin or auditor"):
+        admin_helper.clean_admin_role("superuser")
+
+
 def test_note_is_stored_and_shown(store: Store) -> None:
     store.mutate(
         "create",
@@ -548,7 +588,7 @@ def test_panel_access_uses_separate_credential_and_preserves_final_admin(store: 
 
     store.set_panel_access("quique", False)
     assert "quique" not in store.panel_admin_usernames()
-    with pytest.raises(AdminError, match="final administrator"):
+    with pytest.raises(AdminError, match="revoking the final one"):
         store.set_panel_access("vpn-test-user", False)
 
 

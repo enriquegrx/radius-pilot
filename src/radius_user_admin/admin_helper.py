@@ -76,6 +76,7 @@ OPERATIONS = {
     "bootstrap-admin",
     "set-admin-password",
     "set-panel-access",
+    "set-panel-role",
     "panel-status",
     "audit",
     "backups",
@@ -235,6 +236,13 @@ def clean_note(value: object) -> str:
     if len(note) > 500 or any(ord(char) < 32 and char != "\n" for char in note):
         raise AdminError("The note must be at most 500 printable characters.")
     return note
+
+
+def clean_admin_role(value: object) -> str:
+    role = str(value or "admin").strip().lower()
+    if role not in {"admin", "auditor"}:
+        raise AdminError("Panel role must be admin or auditor.")
+    return role
 
 
 def clean_reason(value: object) -> str:
@@ -538,6 +546,7 @@ class Store:
         sessions = self.active_sessions()
         connections = self.recent_connections(per_user=8)
         panel_admins = self.panel_admin_usernames()
+        panel_roles = self.panel_admin_roles()
         current_timestamp = int(datetime.now(UTC).timestamp())
         active_enrollments = {
             username
@@ -569,6 +578,7 @@ class Store:
             public["session"] = sessions.get(item["username"])
             public["connection_history"] = connections.get(item["username"], [])
             public["panel_access"] = item["username"] in panel_admins
+            public["panel_role"] = panel_roles.get(item["username"], "")
             public["duo_enrollment_active"] = item["username"] in active_enrollments
             public["credential_scheme"] = (
                 "nt-hash" if "nt_password" in item else "legacy-cleartext"
@@ -1718,15 +1728,24 @@ class Store:
         self._write_admin_data(data)
 
     @staticmethod
-    def _admin_record(username: str, password: str) -> dict[str, Any]:
+    def _admin_record(username: str, password: str, role: str = "admin") -> dict[str, Any]:
         salt = os.urandom(16)
         digest = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
         return {
             "username": username,
             "salt": base64.b64encode(salt).decode(),
             "digest": base64.b64encode(digest).decode(),
+            "role": clean_admin_role(role),
             "duo_required": True,
             "updated_at": now(),
+        }
+
+    def panel_admin_roles(self) -> dict[str, str]:
+        if not self.admin_path.exists():
+            return {}
+        return {
+            item["username"]: item.get("role", "admin")
+            for item in self._load_admin_data()["admins"]
         }
 
     def _load_admin_data(self) -> dict[str, Any]:
@@ -1747,23 +1766,48 @@ class Store:
         return {item["username"] for item in self._load_admin_data()["admins"]}
 
     def _panel_access_data(
-        self, username: str, enabled: bool, password: object = None
+        self, username: str, enabled: bool, password: object = None, role: str = "admin"
     ) -> dict[str, Any]:
         data = self._load_admin_data()
         matches = [item for item in data["admins"] if item["username"] == username]
         if enabled:
             if matches:
                 raise AdminError("That user already has panel access.")
-            data["admins"].append(self._admin_record(username, clean_password(password)))
+            data["admins"].append(
+                self._admin_record(username, clean_password(password), role)
+            )
         else:
             if not matches:
                 raise AdminError("That user does not have panel access.")
-            if len(data["admins"]) == 1:
+            remaining = [item for item in data["admins"] if item["username"] != username]
+            if not any(item.get("role", "admin") == "admin" for item in remaining):
                 raise AdminError(
-                    "Grant panel access to another user before revoking the final administrator."
+                    "Grant write access to another panel administrator before revoking "
+                    "the final one."
                 )
-            data["admins"] = [item for item in data["admins"] if item["username"] != username]
+            data["admins"] = remaining
         return data
+
+    def set_panel_role(self, username: object, role: object) -> None:
+        clean = clean_username(username)
+        new_role = clean_admin_role(role)
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = self._load_admin_data()
+            match = next((item for item in data["admins"] if item["username"] == clean), None)
+            if not match:
+                raise AdminError("That user does not have panel access.")
+            if new_role != "admin" and not any(
+                item["username"] != clean and item.get("role", "admin") == "admin"
+                for item in data["admins"]
+            ):
+                raise AdminError(
+                    "Keep at least one panel administrator with write access."
+                )
+            match["role"] = new_role
+            match["updated_at"] = now()
+            self._write_admin_data(data)
 
     def _rename_panel_admin(self, username: str, new_username: str) -> dict[str, Any]:
         data = self._load_admin_data()
@@ -1773,14 +1817,16 @@ class Store:
                 admin["updated_at"] = now()
         return data
 
-    def set_panel_access(self, username: object, enabled: object, password: object = None) -> None:
+    def set_panel_access(
+        self, username: object, enabled: object, password: object = None, role: object = "admin"
+    ) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            self._set_panel_access_locked(username, enabled, password)
+            self._set_panel_access_locked(username, enabled, password, role)
 
     def _set_panel_access_locked(
-        self, username: object, enabled: object, password: object = None
+        self, username: object, enabled: object, password: object = None, role: object = "admin"
     ) -> None:
         clean = clean_username(username)
         if not any(user["username"] == clean for user in self.load()["users"]):
@@ -1793,7 +1839,7 @@ class Store:
             readiness = self.duo_check(clean)
             if readiness["result"] != "auth" or not readiness["push_capable"]:
                 raise AdminError("Duo Push must be ready before granting panel access.")
-        data = self._panel_access_data(clean, enabled_bool, password)
+        data = self._panel_access_data(clean, enabled_bool, password, role)
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         destination = self.backup_dir / stamp
         destination.mkdir(parents=True, exist_ok=False)
@@ -2620,11 +2666,18 @@ def main() -> int:
                 payload.get("username"),
                 payload.get("enabled"),
                 payload.get("panel_password"),
+                payload.get("role", "admin"),
             )
+            result = {}
+        elif args.operation == "set-panel-role":
+            store.set_panel_role(payload.get("username"), payload.get("role"))
             result = {}
         elif args.operation == "panel-status":
             username = str(payload.get("username") or "").strip().lower()
-            result = {"panel_access": username in store.panel_admin_usernames()}
+            result = {
+                "panel_access": username in store.panel_admin_usernames(),
+                "role": store.panel_admin_roles().get(username, "admin"),
+            }
         elif args.operation == "sync":
             store.sync()
             result = {}
@@ -2656,6 +2709,7 @@ def main() -> int:
             "restore",
             "set-admin-password",
             "set-panel-access",
+            "set-panel-role",
             "duo-enroll",
             "set-duo-enroll-api",
             "disconnect",
