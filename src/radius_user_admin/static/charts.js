@@ -290,7 +290,46 @@
   };
   function setText(id, v) { var el = byId(id); if (el && v != null) el.textContent = v; }
 
+  function geoBadge(e) {
+    if (e.blocked) return '<span class="badge bg-red-lt">would block</span>';
+    if (e.decision === "allow") return '<span class="badge bg-green-lt">allow</span>';
+    return '<span class="badge bg-secondary-lt">' + (e.private ? "LAN — allowed" : "unlocated — allowed") + "</span>";
+  }
+  function renderGeo(d) {
+    if (!d) return;
+    var badge = byId("geo-mode-badge");
+    if (badge) {
+      var mode = d.mode || "off";
+      badge.textContent = mode;
+      badge.className = "badge " + (mode === "enforce" ? "bg-red-lt" : mode === "monitor" ? "bg-yellow-lt" : "bg-secondary-lt");
+    }
+    setText("geo-wouldblock", d.would_block_count || 0);
+    var note = byId("geo-note");
+    if (note) note.textContent = d.geolite_csv ? "" : "Worldwide coverage needs a GeoLite2 database (RADIUS_ADMIN_GEOIP_CSV); without it most public IPs read as unlocated.";
+    var feed = byId("geo-feed");
+    if (feed) {
+      var rows = (d.events || []).slice(0, 25).map(function (e) {
+        var loc = esc(e.city || e.country_name || (e.private ? "Private / LAN" : "—"));
+        var cc = e.country ? '<span class="text-secondary"> ' + esc(e.country) + "</span>" : "";
+        return '<tr class="' + (e.blocked ? "geo-row-block" : "") + '"><td class="text-secondary">' +
+          esc((e.timestamp || "").slice(0, 16).replace("T", " ")) + "</td><td>" + esc(e.username) +
+          "</td><td>" + loc + cc + "</td><td><code>" + esc(e.client_ip || "") + "</code></td><td>" + geoBadge(e) + "</td></tr>";
+      }).join("");
+      feed.innerHTML = rows || '<tr><td colspan="5" class="text-secondary py-3">No authentication attempts recorded yet.</td></tr>';
+    }
+  }
+  function fetchGeo() {
+    if (!byId("geo-feed")) return;
+    fetch("/geo.json", { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) renderGeo(d); })
+      .catch(function () {});
+  }
+  RP.fetchGeo = fetchGeo;
+
   function boot() {
+    fetchGeo();
+    if (byId("geo-feed")) setInterval(fetchGeo, 30000);
     var node = byId("dashboard-data");
     if (!node) return;
     var data;

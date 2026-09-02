@@ -48,6 +48,8 @@ try:  # optional: the map degrades to no points if geoip is unavailable
 except Exception:  # pragma: no cover - defensive
     geoip = None  # type: ignore[assignment]
 
+from radius_user_admin import geo_policy
+
 USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
 CLEAR_AUTHORIZE_LINE = re.compile(
     r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
@@ -92,6 +94,9 @@ OPERATIONS = {
     "set-duo-enroll-api",
     "session-history",
     "dashboard",
+    "geo",
+    "set-geo-settings",
+    "set-user-geo",
     "disconnect",
     "migrate-passwords",
     "invite-create",
@@ -326,6 +331,8 @@ class Store:
         invitation_path: Path = Path("/var/lib/radius-user-admin/invitations.json"),
         duo_enroll_config_path: Path = Path("/etc/radius-user-admin/duo-enroll-api.json"),
         monitor_path: Path = Path("/var/lib/radius-user-admin/monitor.json"),
+        geo_settings_path: Path = Path("/var/lib/radius-user-admin/geo.json"),
+        geo_compiled_path: Path = Path("/etc/radius-user-admin/geo-policy.json"),
         policy_destinations: str | None = None,
         local_fallback_users: str | None = None,
         custom_dacl_enabled: bool | None = None,
@@ -345,6 +352,8 @@ class Store:
         self.invitation_path = invitation_path
         self.duo_enroll_config_path = duo_enroll_config_path
         self.monitor_path = monitor_path
+        self.geo_settings_path = geo_settings_path
+        self.geo_compiled_path = geo_compiled_path
         if policy_destinations is None:
             configured = runtime_setting("RADIUS_ADMIN_POLICY_DESTINATIONS", "").strip()
             self.policy_destinations_explicit = bool(configured)
@@ -562,6 +571,7 @@ class Store:
         connections = self.recent_connections(per_user=8)
         panel_admins = self.panel_admin_usernames()
         panel_roles = self.panel_admin_roles()
+        geo_settings_data = self.geo_settings()
         current_timestamp = int(datetime.now(UTC).timestamp())
         active_enrollments = {
             username
@@ -594,6 +604,8 @@ class Store:
             public["connection_history"] = connections.get(item["username"], [])
             public["panel_access"] = item["username"] in panel_admins
             public["panel_role"] = panel_roles.get(item["username"], "")
+            geo_effective, geo_source = self.effective_geo_policy(item, geo_settings_data)
+            public["geo"] = self._geo_summary(geo_effective, geo_source)
             public["duo_enrollment_active"] = item["username"] in active_enrollments
             public["credential_scheme"] = (
                 "nt-hash" if "nt_password" in item else "legacy-cleartext"
@@ -637,6 +649,17 @@ class Store:
             ),
             "accounting_enabled": self.accounting_detail_path.exists(),
             "duo_enrollment_api": self.duo_enroll_api_status(),
+            "geo": {
+                "mode": geo_settings_data["mode"],
+                "default": self._geo_summary(geo_settings_data["default"], "default"),
+                "regions": {
+                    key: {
+                        "label": value["label"],
+                        "count": len(value["countries"]),
+                    }
+                    for key, value in geo_policy.REGIONS.items()
+                },
+            },
             "access_policy": {
                 "custom_enabled": self._custom_dacl_ready(),
                 "avpair_forwarding": self._duo_passes_cisco_avpair(),
@@ -2643,6 +2666,181 @@ class Store:
             0o600,
         )
 
+    # ---- Country-based access policy (geo-fencing) -----------------------
+
+    @staticmethod
+    def _clean_geo_policy(payload: object) -> dict[str, Any]:
+        data = payload if isinstance(payload, dict) else {}
+        regions = [r for r in (data.get("regions") or []) if r in geo_policy.REGIONS]
+
+        def codes(key: str) -> list[str]:
+            out: list[str] = []
+            for value in data.get(key) or []:
+                code = str(value).strip().upper()
+                if re.fullmatch(r"[A-Z]{2}", code) and code not in out:
+                    out.append(code)
+            return out
+
+        return {
+            "regions": regions,
+            "countries_add": codes("countries_add"),
+            "countries_remove": codes("countries_remove"),
+            "fail_open": bool(data.get("fail_open", True)),
+        }
+
+    def geo_settings(self) -> dict[str, Any]:
+        default = {"regions": [], "countries_add": [], "countries_remove": [], "fail_open": True}
+        try:
+            raw = json.loads(self.geo_settings_path.read_text())
+        except (OSError, ValueError):
+            return {"mode": "off", "default": default}
+        mode = raw.get("mode")
+        if mode not in {"off", "monitor", "enforce"}:
+            mode = "off"
+        return {"mode": mode, "default": self._clean_geo_policy(raw.get("default"))}
+
+    def set_geo_settings(self, payload: dict[str, Any]) -> None:
+        mode = str(payload.get("mode") or "off")
+        if mode not in {"off", "monitor", "enforce"}:
+            raise AdminError("Choose a geo mode of off, monitor or enforce.")
+        settings = {"mode": mode, "default": self._clean_geo_policy(payload.get("default"))}
+        self._atomic_write(
+            self.geo_settings_path, json.dumps(settings, indent=2) + "\n", 0o600
+        )
+        self.compile_geo_policy()
+
+    def set_user_geo_policy(self, username: object, payload: dict[str, Any]) -> None:
+        clean = clean_username(username)
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = self.load()
+            user = next((item for item in data["users"] if item["username"] == clean), None)
+            if user is None:
+                raise AdminError("User not found.")
+            if payload.get("clear"):
+                user.pop("geo_policy", None)
+            else:
+                user["geo_policy"] = self._clean_geo_policy(payload)
+            user["updated_at"] = now()
+            data["version"] = 3
+            self._commit(data)
+        self.compile_geo_policy()
+
+    def effective_geo_policy(
+        self, user: dict[str, Any], settings: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any], str]:
+        if settings is None:
+            settings = self.geo_settings()
+        override = user.get("geo_policy")
+        if isinstance(override, dict):
+            return self._clean_geo_policy(override), "user"
+        return settings["default"], "default"
+
+    def _geo_summary(self, policy: dict[str, Any], source: str) -> dict[str, Any]:
+        return {
+            "source": source,
+            "regions": policy["regions"],
+            "countries_add": policy["countries_add"],
+            "countries_remove": policy["countries_remove"],
+            "fail_open": policy["fail_open"],
+            "allowed_count": len(geo_policy.expand_allowed(policy)),
+        }
+
+    def _geo_locate_country(self, ip: str) -> dict[str, Any]:
+        loc = geoip.locate(ip) if geoip and ip else None
+        private = bool(loc and loc.get("private"))
+        country = None if (not loc or private) else (loc.get("country") or None)
+        return {
+            "country": country or "",
+            "country_name": (loc or {}).get("country_name", ""),
+            "city": (loc or {}).get("city", ""),
+            "private": private,
+        }
+
+    def _geo_decide(
+        self, username: str, ip: str, settings: dict[str, Any], users: dict[str, Any]
+    ) -> dict[str, Any]:
+        located = self._geo_locate_country(ip)
+        policy, source = self.effective_geo_policy(users.get(username, {}), settings)
+        decision = geo_policy.decide(
+            located["country"] or None,
+            geo_policy.expand_allowed(policy),
+            policy["fail_open"],
+        )
+        return {
+            **located,
+            "decision": decision,
+            "blocked": geo_policy.is_block(decision),
+            "policy_source": source,
+        }
+
+    def geo_evaluation(self, limit: int = 50) -> dict[str, Any]:
+        """Monitor-mode view: what the current policy WOULD decide for recent
+        authentications and live sessions, without changing any auth outcome."""
+        settings = self.geo_settings()
+        data = self.load()
+        users = {item["username"]: item for item in data["users"]}
+        events = [
+            {
+                **event,
+                **self._geo_decide(
+                    event["username"], event.get("client_ip", ""), settings, users
+                ),
+            }
+            for event in self.recent_authentication(limit=limit)
+        ]
+        online = [
+            {
+                "username": username,
+                "ip": session.get("ip", ""),
+                "client_ip": session.get("client_ip", ""),
+                **self._geo_decide(username, session.get("client_ip", ""), settings, users),
+            }
+            for username, session in self.active_sessions().items()
+        ]
+        return {
+            "mode": settings["mode"],
+            "default": self._geo_summary(settings["default"], "default"),
+            "regions": {key: value["label"] for key, value in geo_policy.REGIONS.items()},
+            "events": events,
+            "online": online,
+            "would_block_count": sum(1 for event in events if event["blocked"]),
+            "geoip_ready": geoip is not None,
+            "geolite_csv": bool(runtime_setting("RADIUS_ADMIN_GEOIP_CSV", "").strip()),
+        }
+
+    def compile_geo_policy(self) -> None:
+        """Write per-user resolved allow-lists for the enforcement hook. Contains
+        only usernames, allowed ISO codes, fail_open and the mode — no secrets."""
+        settings = self.geo_settings()
+        try:
+            data = self.load()
+        except AdminError:
+            return
+        users_out: dict[str, Any] = {}
+        for user in data["users"]:
+            policy, _ = self.effective_geo_policy(user, settings)
+            users_out[user["username"]] = {
+                "allowed": sorted(geo_policy.expand_allowed(policy)),
+                "fail_open": policy["fail_open"],
+            }
+        compiled = {
+            "mode": settings["mode"],
+            "default": {
+                "allowed": sorted(geo_policy.expand_allowed(settings["default"])),
+                "fail_open": settings["default"]["fail_open"],
+            },
+            "users": users_out,
+            "generated_at": now(),
+        }
+        try:
+            self._atomic_write(
+                self.geo_compiled_path, json.dumps(compiled, indent=2) + "\n", 0o644
+            )
+        except OSError:
+            pass  # best-effort; monitor mode does not need the compiled file
+
     @staticmethod
     def _config_section(config: str, name: str) -> dict[str, str]:
         values: dict[str, str] = {}
@@ -2836,6 +3034,14 @@ def main() -> int:
             result = {"history": store.session_history(payload.get("username"))}
         elif args.operation == "dashboard":
             result = store.dashboard()
+        elif args.operation == "geo":
+            result = store.geo_evaluation()
+        elif args.operation == "set-geo-settings":
+            store.set_geo_settings(payload)
+            result = {}
+        elif args.operation == "set-user-geo":
+            store.set_user_geo_policy(payload.get("username"), payload)
+            result = {}
         elif args.operation == "disconnect":
             result = {"disconnected": store.disconnect_session(payload.get("username"))}
         elif args.operation == "migrate-passwords":
@@ -2905,6 +3111,8 @@ def main() -> int:
             "set-expiry",
             "set-note",
             "set-activation",
+            "set-geo-settings",
+            "set-user-geo",
             "object-set",
             "object-delete",
             "object-import",

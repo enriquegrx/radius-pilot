@@ -7,7 +7,7 @@
     <title>RadiusPilot · Wall</title>
     <link rel="icon" href="{{ url_for('static', path='branding/favicon.svg') }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-9">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-10">
   </head>
   <body class="wall" data-wall="1">
     {% set h = dashboard.health or {} %}
@@ -38,7 +38,7 @@
       </div>
       <div class="wall-foot">Updated <span id="rp-updated">{{ dashboard.generated_at or '' }}</span> · auto-refreshing</div>
     </div>
-    <script src="{{ url_for('static', path='charts.js') }}?v=20260902-9"></script>
+    <script src="{{ url_for('static', path='charts.js') }}?v=20260902-10"></script>
     <script>
       (function () {
         function tick() {

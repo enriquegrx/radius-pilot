@@ -209,6 +209,72 @@ def test_duo_enrollment_settings_endpoint_forwards_payload(monkeypatch) -> None:
     assert "secret-key-value-that-never-renders" not in response.text
 
 
+def test_geo_endpoints_forward_payloads(monkeypatch) -> None:
+    mutations = []
+
+    def recording_helper(operation: str, payload=None):
+        if operation in ("set-geo-settings", "set-user-geo"):
+            mutations.append((operation, payload))
+            return {"ok": True}
+        if operation == "geo":
+            return {"ok": True, "mode": "monitor", "events": [], "would_block_count": 0}
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", recording_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    # Global default: two region checkboxes plus extra/removed countries.
+    global_response = client.post(
+        "/settings/geo",
+        data={
+            "csrf": csrf,
+            "mode": "monitor",
+            "regions": ["EU_EEA", "SCHENGEN"],
+            "countries_add": "ch, gb",
+            "countries_remove": "RO",
+            "fail_open": "1",
+        },
+        follow_redirects=False,
+    )
+    assert global_response.status_code == 303
+    operation, payload = mutations[0]
+    assert operation == "set-geo-settings"
+    assert payload["mode"] == "monitor"
+    assert payload["default"]["regions"] == ["EU_EEA", "SCHENGEN"]
+    assert payload["default"]["countries_add"] == ["CH", "GB"]
+    assert payload["default"]["countries_remove"] == ["RO"]
+    assert payload["default"]["fail_open"] is True
+
+    # A per-user override, and then clearing it back to the global default.
+    client.post(
+        "/users/eu-user/geo",
+        data={"csrf": csrf, "scope": "custom", "regions": ["ES"], "fail_open": ""},
+        follow_redirects=False,
+    )
+    client.post(
+        "/users/eu-user/geo",
+        data={"csrf": csrf, "scope": "default"},
+        follow_redirects=False,
+    )
+    assert mutations[1][0] == "set-user-geo"
+    assert mutations[1][1]["regions"] == ["ES"]
+    assert mutations[1][1]["fail_open"] is False
+    assert mutations[2][1]["username"] == "eu-user"
+    assert mutations[2][1]["clear"] is True
+
+    geo_json = client.get("/geo.json")
+    assert geo_json.status_code == 200
+    assert geo_json.json()["mode"] == "monitor"
+
+
 def test_access_object_endpoints_forward_payloads(monkeypatch) -> None:
     mutations = []
 

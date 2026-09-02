@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from radius_user_admin import admin_helper
+from radius_user_admin import admin_helper, geo_policy
 from radius_user_admin.access_policy import (
     AccessPolicyError,
     allowed_destinations,
@@ -72,6 +72,8 @@ port=1812
         invitation_path=tmp_path / "state/invitations.json",
         duo_enroll_config_path=tmp_path / "duo-enroll-api.json",
         monitor_path=tmp_path / "state/monitor.json",
+        geo_settings_path=tmp_path / "state/geo.json",
+        geo_compiled_path=tmp_path / "state/geo-policy.json",
         runner=Runner(),
     )
     result.bootstrap()
@@ -1221,6 +1223,49 @@ def test_session_history_orders_and_marks_active(store: Store) -> None:
     assert [h["session_id"] for h in history] == ["NEW", "OLD"]
     assert history[0]["active"] is True
     assert history[1]["active"] is False
+
+
+def test_geo_settings_evaluation_and_override(store: Store) -> None:
+    store.mutate(
+        "create",
+        {"username": "eu-user", "password": "a-long-password", "duo_required": True},
+    )
+    store.set_geo_settings(
+        {"mode": "monitor", "default": {"regions": ["EU_EEA"], "fail_open": True}}
+    )
+    assert store.geo_settings()["mode"] == "monitor"
+
+    store.auth_events_path.write_text(
+        json.dumps(
+            {"username": "eu-user", "client_ip": "150.214.205.52", "status": "Allow",
+             "auth_stage": "Primary authentication", "timestamp": "2026-09-02T10:00:00"}
+        )
+        + "\n"
+        + json.dumps(
+            {"username": "eu-user", "client_ip": "8.8.8.8", "status": "Allow",
+             "auth_stage": "Primary authentication", "timestamp": "2026-09-02T10:01:00"}
+        )
+        + "\n"
+    )
+    evaluation = store.geo_evaluation()
+    decisions = {event["client_ip"]: event["decision"] for event in evaluation["events"]}
+    assert decisions["150.214.205.52"] == "allow"  # Granada, ES -> in EU/EEA
+    assert decisions["8.8.8.8"] == "deny"  # Mountain View, US -> outside EU/EEA
+    assert evaluation["would_block_count"] == 1
+    assert evaluation["mode"] == "monitor"  # monitor never actually rejects
+
+    # A per-user override to Spain-only replaces the global default for that user.
+    store.set_user_geo_policy("eu-user", {"regions": ["ES"], "fail_open": True})
+    user = next(item for item in store.load()["users"] if item["username"] == "eu-user")
+    policy, source = store.effective_geo_policy(user)
+    assert source == "user"
+    assert geo_policy.expand_allowed(policy) == {"ES"}
+
+    # Clearing the override falls back to the global default.
+    store.set_user_geo_policy("eu-user", {"clear": True})
+    user = next(item for item in store.load()["users"] if item["username"] == "eu-user")
+    _, source = store.effective_geo_policy(user)
+    assert source == "default"
 
 
 def test_dashboard_aggregates_and_geolocates(store: Store) -> None:

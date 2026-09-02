@@ -396,6 +396,22 @@
         field.innerHTML = `<label class="form-label" for="action-input">Role</label><select class="form-select" id="action-input" name="role"><option value="admin" ${auditor ? "" : "selected"}>Administrator — full control</option><option value="auditor" ${auditor ? "selected" : ""}>Auditor — read-only</option></select>`;
         form.action = `/users/${encode(user)}/panel-role`;
         submit.textContent = "Save role";
+      } else if (action === "geo") {
+        let policy = {}; try { policy = JSON.parse(data.geo || "{}"); } catch (e) {}
+        let regions = {}; try { regions = JSON.parse(document.body.dataset.geoRegions || "{}"); } catch (e) {}
+        const selected = policy.regions || [];
+        title.textContent = `Country access for ${user}`;
+        description.textContent = "Overrides the global default for this user. The global mode (off / monitor / enforce) still applies.";
+        const boxes = Object.keys(regions).map((key) => `<label class="form-check geo-region"><input class="form-check-input" type="checkbox" name="regions" value="${key}" ${selected.indexOf(key) >= 0 ? "checked" : ""}><span class="form-check-label">${regions[key].label}</span></label>`).join("");
+        field.innerHTML = `<input type="hidden" name="scope" value="custom"><div class="mb-2"><label class="form-label">Allowed regions</label><div class="geo-regions">${boxes}</div></div><div class="geo-form-row"><div><label class="form-label" for="action-input">Also allow (ISO codes)</label><input class="form-control" id="action-input" name="countries_add" value="${(policy.countries_add || []).join(", ")}" placeholder="CH, GB" autocomplete="off"></div><div><label class="form-label">Remove from the above</label><input class="form-control" name="countries_remove" value="${(policy.countries_remove || []).join(", ")}" placeholder="RO" autocomplete="off"></div></div><label class="form-check mt-2"><input class="form-check-input" type="checkbox" name="fail_open" value="1" ${policy.fail_open ? "checked" : ""}><span class="form-check-label">Allow when the IP can't be located (fail-open)</span></label>`;
+        form.action = `/users/${encode(user)}/geo`;
+        submit.textContent = "Save country policy";
+      } else if (action === "geo-default") {
+        title.textContent = `Use the global default for ${user}?`;
+        description.textContent = "Removes this user's country override and falls back to the global default policy.";
+        field.innerHTML = `<input type="hidden" name="scope" value="default"><div class="change-summary"><span>Country access</span><strong>Custom → Global default</strong></div>`;
+        form.action = `/users/${encode(user)}/geo`;
+        submit.textContent = "Use global default";
       } else if (action === "disconnect") {
         title.textContent = `Disconnect ${user}?`;
         description.textContent = "This asks the gateway to drop the user's live VPN session immediately. They can reconnect unless you also block the account.";

@@ -5,6 +5,7 @@ import io
 import ipaddress
 import json
 import os
+import re
 import secrets
 import smtplib
 import ssl
@@ -402,6 +403,17 @@ def index(request: Request):
             "panel_admin_count": sum(user["panel_access"] for user in users),
             "expiring_count": sum(user["expires_soon"] for user in users),
             "dashboard": dashboard,
+            "geo": (data.get("geo") if not error else None) or {
+                "mode": "off",
+                "default": {
+                    "regions": [],
+                    "countries_add": [],
+                    "countries_remove": [],
+                    "fail_open": True,
+                    "allowed_count": 0,
+                },
+                "regions": {},
+            },
             "online_count": data.get("online_count", 0) if not error else 0,
             "accounting_enabled": bool(data.get("accounting_enabled")) if not error else False,
             "concurrent_count": data.get("concurrent_count", 0) if not error else 0,
@@ -460,6 +472,17 @@ def dashboard_json(request: Request):
         return Response(status_code=401)
     try:
         return call_helper("dashboard", helper_payload(request, {}))
+    except HelperError:
+        return Response(status_code=503)
+
+
+@app.get("/geo.json")
+def geo_json(request: Request):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return Response(status_code=401)
+    try:
+        return call_helper("geo", helper_payload(request, {}))
     except HelperError:
         return Response(status_code=503)
 
@@ -902,6 +925,41 @@ def set_duo_enrollment_api(
         {"ikey": ikey, "skey": skey, "api_host": api_host},
         anchor="system",
     )
+
+
+def _split_country_codes(text: str) -> list[str]:
+    codes: list[str] = []
+    for token in re.split(r"[\s,;]+", text or ""):
+        code = token.strip().upper()
+        if len(code) == 2 and code.isalpha() and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _geo_policy_from_form(form) -> dict[str, object]:
+    return {
+        "regions": [str(value) for value in form.getlist("regions")],
+        "countries_add": _split_country_codes(str(form.get("countries_add", ""))),
+        "countries_remove": _split_country_codes(str(form.get("countries_remove", ""))),
+        "fail_open": bool(form.get("fail_open")),
+    }
+
+
+@app.post("/settings/geo")
+async def set_geo_settings_route(request: Request):
+    form = await request.form()
+    payload = {"mode": str(form.get("mode", "off")), "default": _geo_policy_from_form(form)}
+    return mutate(request, str(form.get("csrf", "")), "set-geo-settings", payload, anchor="system")
+
+
+@app.post("/users/{username}/geo")
+async def set_user_geo_route(username: str, request: Request):
+    form = await request.form()
+    if str(form.get("scope", "default")) == "default":
+        payload: dict[str, object] = {"username": username, "clear": True}
+    else:
+        payload = {"username": username, **_geo_policy_from_form(form)}
+    return mutate(request, str(form.get("csrf", "")), "set-user-geo", payload, anchor="users")
 
 
 @app.post("/access-objects")

@@ -256,3 +256,13 @@ body.wall { background: #0a0f16; color: #e7eef6; }
 .wall-list .where { color: #8aa0b8; font-size: .8rem; }
 .wall-foot { color: #64788e; font-size: .78rem; text-align: right; }
 @media (max-width: 1100px) { .wall-grid { grid-template-columns: 1fr; } .wall-kpis { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---- Country access (geo-fencing) ------------------------------------ */
+.geo-form-row { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
+.geo-failopen { align-self: end; padding-bottom: .4rem; }
+.geo-regions { display: flex; flex-wrap: wrap; gap: .4rem .9rem; }
+.geo-region { margin: 0; }
+.geo-row-block td { background: rgba(214,57,57,.08); }
+[data-bs-theme="dark"] .geo-row-block td { background: rgba(214,57,57,.16); }
+.geo-tile-summary { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+@media (max-width: 620px) { .geo-form-row { grid-template-columns: 1fr; } }

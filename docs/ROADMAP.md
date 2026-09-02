@@ -129,3 +129,20 @@ dependency-free inline SVG from a single accounting-derived `dashboard` payload
     with live sessions highlighted.
 34. [x] **Live architecture diagram.** Cisco ISR → Duo Proxy → FreeRADIUS → Duo
     Cloud with per-component health and an animated flow.
+
+## Country-based access policy (geo-fencing)
+
+Restrict logins by the country of the client's public IP — a global default with
+per-user overrides, region presets (EU/EEA, Schengen, Spain) plus per-country
+allow/remove, and a fail-open/closed choice. A compliance control, not a hard
+boundary (a VPN/proxy in an allowed country bypasses it); worldwide accuracy
+needs a GeoLite2 database.
+
+35. [x] **Monitor mode.** The console evaluates what the policy *would* decide for
+    recent authentications and live sessions, entirely from the Duo proxy's auth
+    log — no change to the auth path, zero lock-out risk. Shows a "would block"
+    feed and a per-user country policy tile.
+36. [ ] **Enforcement (FreeRADIUS hook).** A geo-check called from FreeRADIUS
+    `authorize` that rejects disallowed countries before the Duo push, driven by
+    the compiled per-user allow-lists RadiusPilot already writes. Flip from
+    monitor to enforce once the monitor feed shows no false positives.

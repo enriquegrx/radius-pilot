@@ -57,6 +57,11 @@ elif sys.argv[1] == "list":
                         "created_at": "2026-01-01T00:00:00+00:00",
                         "updated_at": "2026-01-01T00:00:00+00:00",
                         "last_auth": None,
+                        "geo": {
+                            "source": "default", "regions": ["EU_EEA"],
+                            "countries_add": ["CH"], "countries_remove": [],
+                            "fail_open": True, "allowed_count": 31,
+                        },
                     }
                 ],
                 "health": {
@@ -76,6 +81,19 @@ elif sys.argv[1] == "list":
                     "configured": True,
                     "api_host": "api-xxxxxxxx.duosecurity.com",
                     "ikey_hint": "DIXX",
+                },
+                "geo": {
+                    "mode": "monitor",
+                    "default": {
+                        "source": "default", "regions": ["EU_EEA"], "countries_add": ["CH"],
+                        "countries_remove": [], "fail_open": True, "allowed_count": 31,
+                    },
+                    "regions": {
+                        "EU_EEA": {"label": "EU / EEA", "count": 30},
+                        "SCHENGEN": {"label": "Schengen area", "count": 29},
+                        "EUROPE": {"label": "Europe (incl. UK & Switzerland)", "count": 44},
+                        "ES": {"label": "Spain only", "count": 1},
+                    },
                 },
                 "access_policy": {
                     "custom_enabled": True,
@@ -190,6 +208,42 @@ elif sys.argv[1] == "dashboard":
                 },
                 "accounting_enabled": True,
                 "coa_enabled": True,
+            }
+        )
+    )
+elif sys.argv[1] == "geo":
+    def _ge(user, ip, country, name, city, decision, blocked, private=False):
+        return {
+            "username": user, "client_ip": ip, "country": country,
+            "country_name": name, "city": city, "decision": decision,
+            "blocked": blocked, "private": private, "policy_source": "default",
+            "status": "Allow", "auth_stage": "Primary authentication",
+            "timestamp": "2026-09-02T13:55:00",
+        }
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "mode": "monitor",
+                "default": {
+                    "source": "default", "regions": ["EU_EEA"], "countries_add": ["CH"],
+                    "countries_remove": [], "fail_open": True, "allowed_count": 31,
+                },
+                "regions": {
+                    "EU_EEA": "EU / EEA", "SCHENGEN": "Schengen area",
+                    "EUROPE": "Europe (incl. UK & Switzerland)", "ES": "Spain only",
+                },
+                "events": [
+                    _ge("hola@quique.es", "150.214.205.52", "ES", "Spain", "Granada", "allow", 0),
+                    _ge("us-east", "8.8.8.8", "US", "United States", "Mountain View", "deny", True),
+                    _ge("london-dev", "80.0.0.1", "GB", "UK", "London", "deny", True),
+                    _ge("night-shift", "10.0.0.5", "", "", "", "unknown-allow", False, True),
+                ],
+                "online": [],
+                "would_block_count": 2,
+                "geoip_ready": True,
+                "geolite_csv": False,
             }
         )
     )
