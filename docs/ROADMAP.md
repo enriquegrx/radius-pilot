@@ -150,3 +150,21 @@ needs a GeoLite2 database.
     the login. Worldwide country resolution uses an optional GeoLite2 mmdb
     (`RADIUS_ADMIN_GEOIP_MMDB`). Wiring it into a site stays a deliberate manual
     step (`deploy/freeradius-geo-check.conf`).
+
+## Infrastructure-wide authentication (future phases)
+
+37. [ ] **Device administration login via RADIUS.** Authenticate console/VTY
+    logins to the IOS/IOS-XE routers and switches against the same FreeRADIUS,
+    optionally through the Duo proxy so device CLI access also requires a Push
+    (`aaa authentication login` / `aaa authorization exec`, reply
+    `shell:priv-lvl=15`, with a local break-glass fallback). RADIUS covers
+    login + privilege level; per-command authorization and accounting would need
+    TACACS+, which FreeRADIUS does not speak natively. Lower risk: local fallback
+    keeps you from being locked out of the devices.
+38. [ ] **FlexVPN site-to-site peers under RADIUS.** Bring the cert/PSK
+    site-to-site tunnels under RADIUS authorization + accounting + dynamic-author
+    so peers appear in the console (map/online) and can be torn down on demand
+    via CoA — the same Disconnect capability as AnyConnect. Peer authentication
+    stays cert/PSK. The IOS XE 17.12 CoA-teardown caveat seen with AnyConnect
+    likely applies; validate with a canary. Higher risk: touches production
+    inter-site links, so do it with an operator present.

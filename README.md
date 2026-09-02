@@ -6,136 +6,177 @@
 
 Ever wanted to put two-factor authentication in front of your Cisco ISR's
 console or VPN access, but never found a setup that just works? This project
-makes it easy.
+makes it easy — and then gives you a live view of who is connected, from where,
+and the controls to do something about it.
 
 [![CI](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/enriquegrx/radius-pilot/actions/workflows/codeql.yml)
 
 RadiusPilot puts Duo two-factor authentication in front of a Cisco ISR's remote
 access without the usual pain. People connect with AnyConnect over IKEv2, the
-router checks their password against FreeRADIUS, Duo asks for the Push, and the
-same FreeRADIUS-plus-Duo chain can front the router's own login as well. A
-small web console keeps the accounts under control: see who has access, add an
-account, enrol it in Duo, reset a password, block it, or remove it.
+router checks their password against FreeRADIUS, Duo asks for the Push, and a
+small web console keeps the accounts and their access under control. It runs the
+whole thing with **no database** — just root-owned JSON state and the generated
+FreeRADIUS `authorize` file.
 
-![The RadiusPilot console: at-a-glance metrics including who is online now, the VPN user list with status, network access and authentication, and the reusable access objects library](docs/img/screenshot-dashboard.png)
+<p align="center">
+  <img src="docs/img/screenshot-wall.png" alt="The RadiusPilot operations wall: online count, a live world map of connected sessions, a concurrent-sessions chart, the authentication path with per-component health, and a live session list" width="900">
+</p>
 
-The application runs on `radius01` behind Nginx. FastAPI listens only on
-loopback; Nginx publishes HTTPS to the approved internal and VPN networks. There
-is no WAN NAT, Cloudflare Tunnel, or public admin path.
+## What it does 🧭
+
+**Accounts and 2FA.** List, create, rename, block, unblock and delete VPN
+accounts without ever exposing a password. Send one-time invitations so people
+choose their own initial password and continue straight into Duo Mobile
+enrollment. Switch any account between password-plus-Duo-Push and a temporary,
+time-limited password-only exception. Credentials are stored as
+MS-CHAPv2-compatible NT hashes, because Cisco IKEv2 cannot validate bcrypt.
+
+**Live operations.** When RADIUS accounting is on, RadiusPilot shows an
+**Overview** dashboard and a full-screen **operations wall** (`/wall`): who is
+online now, a world map of active sessions geolocated from their public IP,
+concurrent-sessions and per-day usage charts, an activity heatmap, a today
+timeline, and a live architecture diagram with per-component health. Each online
+user can be **disconnected on demand** (RADIUS CoA), and their recent
+connections, data usage and concurrent-session warnings are one click away.
+
+<p align="center">
+  <img src="docs/img/screenshot-overview.png" alt="The Overview tab: a live connection map, today's totals with trend arrows, a concurrent-sessions chart, top talkers, connections by hour, a weekday-by-hour activity heatmap and a session timeline" width="900">
+</p>
+
+**Country-based access (geo-fencing).** Restrict logins by the country of the
+client's public IP — a global default with per-user overrides, region presets
+(EU/EEA, Schengen, Spain) plus per-country allow/remove, and a fail-open or
+fail-closed choice. It ships a **monitor mode** that records what *would* be
+blocked without changing any authentication outcome, so you can check for false
+positives before switching on real **enforcement** in FreeRADIUS. It is a
+compliance control, not a hard boundary: a VPN or proxy in an allowed country
+bypasses it.
+
+<p align="center">
+  <img src="docs/img/screenshot-geo.png" alt="The country-access card in monitor mode: a mode selector, allowed-region checkboxes, extra and removed countries, and a live feed of recent authentications with the country each resolved to and whether it would be blocked" width="900">
+</p>
+
+**Per-user network access.** Give each account either the gateway's normal
+full-access profile or a custom allowlist of IPv4 destinations, protocols and
+ports, built from reusable, nestable access objects. Everything is validated and
+compiled to Cisco reply attributes before it reaches the live service.
+
+<p align="center">
+  <img src="docs/img/screenshot-user-detail.png" alt="An expanded VPN user, showing cards for the live session, roles, credential storage, Duo, schedule, country access, network access and the compiled RADIUS reply" width="900">
+</p>
+
+**Safe by construction.** A separate scrypt-hashed console password with its own
+Duo Push, a 30-minute idle timeout, CSRF protection and login rate limiting. The
+web process runs unprivileged and cannot read the password store; every write
+goes through a narrowly scoped root helper, is validated against FreeRADIUS (and
+Duo) before the service restarts, and rolls back automatically if anything
+fails. A five-minute reconciler enforces account expiries and password-only
+exceptions. Administrative changes and VPN authentication results are recorded
+without ever storing a password.
 
 ## Why it exists 💡
 
 Wiring AnyConnect, a Cisco ISR, FreeRADIUS and the Duo Authentication Proxy
 together is well documented but genuinely fiddly, and once it works you still
 have to run it. Editing the FreeRADIUS `authorize` file by hand is quick until
-account state, Duo exceptions and emergency access all need to stay in sync.
-This console keeps that workflow simple without turning it into a
+account state, Duo exceptions, per-user access and emergency access all need to
+stay in sync. This console keeps that workflow simple without turning it into a
 general-purpose identity platform. Routine changes stay within three clicks and
 every write is validated before it reaches the live authentication service.
 
-## What it does 🧭
+## How it works 🧱
 
-- Lists enabled and blocked users without exposing passwords.
-- Creates, renames, blocks, unblocks, and deletes accounts.
-- Creates one-time invitations so users can choose their own initial password
-  and continue directly into Duo Mobile enrollment.
-- Stores new and reset VPN credentials as MS-CHAPv2-compatible NT hashes.
-  Existing clear-text entries can be migrated one account at a time with
-  backup and rollback. Cisco IKEv2 cannot validate bcrypt credentials.
-- Switches each enabled account between password plus Duo Push and password only.
-- Gives each VPN account either the normal full-access profile or a custom
-  allowlist of IPv4 destinations, protocols, and ports.
-- Stores reusable, nestable access objects so common destinations and services
-  are defined once and referenced from many policies; edits propagate and are
-  revalidated against every referencing policy before they are accepted.
-- Protects the console with a separate scrypt-hashed administrator password,
-  Duo Push, a 30-minute idle timeout, CSRF protection, and login rate limiting.
-- Assigns panel access as an explicit per-user role. A panel administrator keeps
-  a separate console password, must be Duo-ready, and may not reuse the VPN
-  password. The final panel administrator cannot be revoked or deleted.
-- Records administrative changes and recent VPN authentication results without
-  storing passwords in the audit trail.
-- Supports account expirations and time-limited password-only exceptions; a
-  systemd timer enforces both automatically every five minutes.
-- Checks Duo enrollment and Push capability before enabling Duo for an account.
-- Creates seven-day Duo Mobile activations through the Auth API and presents the
-  QR code or mobile activation link only to a signed-in panel administrator.
-- Shows service, certificate, disk, and backup health, and exports redacted
-  diagnostics and audit CSV files.
-- Optionally shows who is connected right now, with assigned IP and session
-  duration, from RADIUS accounting.
-- Optionally emails the administrator when the service degrades or recovers and
-  before accounts expire.
-- Lists configuration backups and restores them through the same validation and
-  rollback path used for ordinary changes.
-- Resets a password without ever showing the previous one.
-- Refuses to block or delete the final enabled account.
-- Validates the full FreeRADIUS configuration before restarting the service.
-- Validates both FreeRADIUS and Duo Authentication Proxy before restarting them.
-- Restores all previous files automatically if validation or restart fails.
-- Keeps a root-owned state file and generates the existing `authorize` file.
+![RadiusPilot architecture: AnyConnect clients reach the Cisco ISR over IKEv2, the ISR authenticates through the Duo Authentication Proxy against FreeRADIUS and the Duo cloud, and the RadiusPilot console maintains the generated authorize file through a root helper](docs/img/architecture.svg)
 
-The username entered here must match the username enrolled in Duo when Duo Push
-is required. Email-style usernames such as `user@your-domain.com` are supported.
-Password-only mode uses Duo Authentication Proxy's
-`exempt_username_N` setting for this VPN integration; FreeRADIUS still checks the
-primary password. It does not place the user in global Duo bypass. Blocking a
-user removes it from the generated FreeRADIUS file, so neither the primary
-password nor Duo Push is reached.
+The application runs on `radius01` behind Nginx. FastAPI listens only on
+loopback; Nginx publishes HTTPS to the approved internal and VPN networks. There
+is no WAN NAT, Cloudflare Tunnel or public admin path.
+
+The FastAPI process runs as the unprivileged `radiusui` account. It cannot read
+the password store or the generated FreeRADIUS file. Mutations are sent as JSON
+over stdin to a narrowly scoped root helper through `sudo`, so passwords never
+appear in process lists. The helper is the only writer of the root-owned state
+(`/var/lib/radius-user-admin/users.json`), the generated FreeRADIUS `authorize`
+file, the console administrator verifier, the append-only audit log, and the
+dated backup taken before every change.
+
+### Where the live data comes from 🛰️
+
+RadiusPilot never asks the client for its location — it reads what the Cisco ISR
+already reports, all of it flowing through the same authentication chain:
+
+- The **ISR** includes the client's real public IP as `Calling-Station-Id` in
+  every RADIUS Access-Request and accounting packet, and the assigned tunnel IP
+  as `Framed-IP-Address`.
+- The **Duo Authentication Proxy** sits in front: it logs each authentication —
+  including that client IP — to its structured `authevents.log`, and forwards
+  the primary check to FreeRADIUS.
+- With `aaa accounting` enabled, the ISR streams Start / Interim / Stop records
+  to FreeRADIUS, written to a detail file with the client IP, tunnel IP, session
+  time and byte counters.
+
+From those three sources RadiusPilot builds everything else, with an **offline**
+IP-to-location database (GeoLite2 or the free DB-IP Country Lite, in MaxMind
+`.mmdb` format) — no third-party geolocation calls:
+
+- **Online now, the live map and usage** come from RADIUS accounting.
+- **Geo-fencing monitor** reads the client IP from the Duo proxy's auth log and
+  records what the country policy would decide.
+- **Geo-fencing enforce** is a small FreeRADIUS hook that reads
+  `Calling-Station-Id` on the live Access-Request and rejects a disallowed
+  country before the Duo Push.
+
+The country hook is deliberately fail-safe: it rejects only in enforce mode, and
+any error, timeout, private/unresolved IP under fail-open, or non-enforce mode
+allows the login. Switching a policy between off, monitor and enforce takes
+effect on the next authentication with no FreeRADIUS reload.
+
+The interface uses the open-source [Tabler](https://tabler.io/) design system,
+vendored locally under its MIT license. Charts, the map and the wall are plain
+inline SVG rendered in the browser — no charting library and no CDN.
 
 ## Open the console 🌐
 
-From a device on an approved LAN or connected through the Example Organization VPN, open
-<https://radius.your-domain.com>. Nginx and nftables both enforce the source-network
-allowlist.
+From a device on an approved LAN or connected through the organization VPN, open
+`https://radius.your-domain.com`. Nginx and nftables both enforce the
+source-network allowlist.
 
 <p align="center">
   <img src="docs/img/screenshot-login.png" alt="The RadiusPilot administrator sign-in page" width="420">
 </p>
 
-Sign in with the separate console administrator account and approve the Duo Push.
+Sign in with the separate console administrator account and approve the Duo
+Push. The username entered for a VPN account must match the username enrolled in
+Duo when Duo Push is required; email-style usernames such as
+`user@your-domain.com` are supported.
 
-## Architecture 🧱
+## Country-based access (geo-fencing) 🌍
 
-![RadiusPilot architecture: AnyConnect clients reach the Cisco ISR over IKEv2, the ISR authenticates through the Duo Authentication Proxy against FreeRADIUS and the Duo cloud, and the RadiusPilot console maintains the generated authorize file through a root helper](docs/img/architecture.svg)
+Geo-fencing has a global default policy and optional per-user overrides. A policy
+is a set of allowed countries built from region presets plus per-country
+adjustments, with a fail-open or fail-closed choice for IPs that cannot be
+located. An empty policy is a safe no-op — it allows everyone rather than
+blocking everyone.
 
-The FastAPI process runs as the unprivileged `radiusui` account. It cannot read
-the password store or the generated FreeRADIUS file. Mutations are sent as JSON
-over stdin to a narrowly scoped root helper through `sudo`; passwords therefore
-do not appear in process lists.
+It rolls out in two stages so it can never lock people out by surprise:
 
-The helper maintains:
+1. **Monitor** (pure console, zero risk). RadiusPilot evaluates what the policy
+   *would* decide for recent authentications and live sessions, entirely from
+   data it already has, and shows a would-block feed. Nothing about
+   authentication changes. Run it until the feed shows no false positives.
+2. **Enforce** (a FreeRADIUS hook). Install
+   `deploy/radius-pilot-geo-check` and wire `deploy/freeradius-geo-check.conf`
+   into the primary-auth site (a deliberate, documented step). The hook reads the
+   per-user allow-lists the console compiles on every change and rejects a
+   disallowed country before the Duo Push. Flip the console mode to enforce when
+   you are ready — it takes effect immediately.
 
-- `/var/lib/radius-user-admin/users.json` — root-only source of truth.
-- `/etc/freeradius/3.0/mods-config/files/vpn-users/authorize` — generated
-  active users consumed by FreeRADIUS.
-- `/opt/duoauthproxy/conf/authproxy.cfg` — retains its hand-written settings and
-  receives only a marked, generated username-exemption block.
-- `/var/lib/radius-user-admin/admins.json` — root-only scrypt verifier for the
-  console administrator; it does not contain the clear-text password.
-- `/var/lib/radius-user-admin/audit.jsonl` — append-only administrative audit
-  events with actor and source address, never credentials.
-- `/var/lib/radius-user-admin/duo-enrollments.json` — root-only temporary Duo
-  activation links and expiry times.
-- `/var/lib/radius-user-admin/invitations.json` — root-only invitation metadata;
-  only SHA-256 token digests are retained, never the usable links.
-- `/etc/radius-user-admin/duo-enroll-api.json` — root-only credentials for the
-  dedicated Auth API enrollment integration; this file must never enter Git.
-- `/var/backups/radius-user-admin/` — dated snapshots before every mutation.
-
-For a custom access policy, the helper compiles the validated form fields into
-Cisco `Cisco-AVPair` reply attributes in the generated FreeRADIUS file. The
-browser never accepts raw ACL lines or arbitrary RADIUS attributes. Full-access
-accounts receive no policy attributes and continue to use the VPN gateway's
-normal group policy.
-
-Authentication history is read from Duo Authentication Proxy's structured
-`authevents.log`. Only the timestamp, username, source address, stage, and result
-are returned to the web process.
-
-The interface uses the open-source [Tabler](https://tabler.io/) design system,
-vendored locally under its MIT license.
+Worldwide country resolution needs an offline database. Point
+`RADIUS_ADMIN_GEOIP_MMDB` at a GeoLite2 or DB-IP Country `.mmdb`, or drop one in
+`/var/lib/GeoIP/` where both the console and the hook find it automatically
+(install `python3-maxminddb`). Without a database, only well-known ranges
+resolve and everything else is treated as unlocated, allowed under fail-open.
 
 ## Configuring the Cisco ISR and FreeRADIUS 📡
 
@@ -143,11 +184,13 @@ vendored locally under its MIT license.
 minimal working configuration for everything around RadiusPilot: the ISR's AAA
 and RADIUS plumbing, a complete AnyConnect-over-IKEv2 (FlexVPN) profile,
 optional Duo-protected SSH logins to the router itself, the Duo Authentication
-Proxy file, and the FreeRADIUS pieces. It also explains the three settings
-people most often get wrong: the long RADIUS timeout the Push needs,
-`aaa authorization user anyconnect-eap cached` (required for custom access
-policies to be enforced), and seeding the AnyConnect XML profile for the very
-first connection.
+Proxy file, the FreeRADIUS pieces, the RADIUS accounting that powers the live
+map, and the CoA (dynamic-author) that powers the Disconnect button. It also
+explains the settings people most often get wrong: the long RADIUS timeout the
+Push needs, `aaa authorization user anyconnect-eap cached` (required for custom
+access policies to be enforced), periodic interim accounting (required so a
+long-lived session does not silently age out of "online now"), and seeding the
+AnyConnect XML profile for the first connection.
 
 ## Development 🧰
 
@@ -159,11 +202,14 @@ python3 -m venv .venv
 .venv/bin/ruff check .
 ```
 
-For a local UI run that does not touch FreeRADIUS, provide a fake helper:
+For a local UI run that does not touch FreeRADIUS, provide a fake helper — it
+serves demonstration users, sessions, dashboard and geo data so the whole
+console, map and wall are explorable offline:
 
 ```bash
 RADIUS_ADMIN_HELPER=tests/fake_helper.py \
 RADIUS_ADMIN_SESSION_SECRET=development-only \
+RADIUS_ADMIN_SECURE_COOKIE=0 \
 .venv/bin/uvicorn radius_user_admin.app:app --reload
 ```
 
@@ -172,18 +218,17 @@ RADIUS_ADMIN_SESSION_SECRET=development-only \
 Deployment is intentionally Debian-native: packaged Python modules, a hardened
 systemd unit, a dedicated service user, Nginx with a Let's Encrypt certificate,
 and a single sudoers entry. Do not bind Uvicorn to a LAN address or add public
-NAT. Certificate issuance and renewal use DNS-01 on `pki01`; the deploy hook
-copies the renewed files to `radius01`, tests Nginx, and reloads it.
+NAT.
 
 From a checkout on the target host, `sudo deploy/install.sh` installs the
 application, the `radiusui` service account, the root helper and its sudoers
-rule, the systemd unit and reconciliation timer, and the root-only state
-directory. It is idempotent, never overwrites an existing environment file or
-state, and leaves the site-specific pieces — Nginx, TLS, nftables, FreeRADIUS,
-Duo, and the router — to be applied by hand (their example files sit in
-`deploy/`, and the Cisco/FreeRADIUS steps are in
-[docs/cisco-isr-freeradius.md](docs/cisco-isr-freeradius.md)). It then prints
-the bootstrap and enable commands.
+rule, the geo-check hook, the systemd unit and reconciliation timer, and the
+root-only state directory. It is idempotent, never overwrites an existing
+environment file or state, and leaves the site-specific pieces — Nginx, TLS,
+nftables, FreeRADIUS, Duo, and the router — to be applied by hand (their example
+files sit in `deploy/`, and the Cisco/FreeRADIUS steps are in
+[docs/cisco-isr-freeradius.md](docs/cisco-isr-freeradius.md)). It then prints the
+bootstrap and enable commands.
 
 Once installed, `RELEASE_TARGET=user@host [RELEASE_JUMP=user@jump]
 deploy/release.sh` ships a new version of the running console: it gates on the
@@ -330,8 +375,9 @@ Restoring the automatically created backup returns both the user state and the
 generated `authorize` file to their previous format.
 
 `radius-user-admin-reconcile.timer` runs every five minutes. It blocks expired
-accounts and restores Duo enforcement when a temporary password-only exception
-expires. No service restart occurs when there is nothing to change.
+accounts, restores Duo enforcement when a temporary password-only exception
+expires, and recompiles the geo-fencing allow-lists. No service restart occurs
+when there is nothing to change.
 
 GitHub Actions runs Ruff, the test suite, dependency auditing and CodeQL on the
 public repository. Dependabot keeps Python and workflow dependencies visible
@@ -346,7 +392,8 @@ the reviewed files over an approved administrative path, compile the Python
 modules, run the privileged bootstrap/reconciliation helper, validate the full
 FreeRADIUS configuration, restart only the web service, and check `/healthz`.
 If any step fails, restore the saved application files, user state, and managed
-`authorize` file before restarting the affected services.
+`authorize` file before restarting the affected services. `deploy/release.sh`
+automates exactly this sequence.
 
 An internal LAN runner may automate that sequence later, but it should consume
 an immutable reviewed revision and require an approval gate. Do not configure a
