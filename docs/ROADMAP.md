@@ -34,6 +34,20 @@ Items are checked off as they ship.
 9. [ ] **Assisted RADIUS shared-secret rotation.** Rotating the secret across
    the router, proxy and FreeRADIUS is manual and easy to get wrong.
 
+## Live-session features (built on RADIUS accounting)
+
+- [x] **Disconnect a session (RADIUS CoA).** A Disconnect button on each online
+   user asks the gateway to drop the session via CoA Disconnect-Request. Needs
+   dynamic-author on the gateway and the CoA env settings.
+- [x] **Connection history per user.** Recent connections (start, end, duration,
+   IP, usage) reconstructed from accounting, shown in the user's row.
+- [x] **Data usage per session.** Upload/download totals in the live-session
+   block, from the accounting octet counters.
+- [x] **Concurrent-session warning.** Users with multiple simultaneous sessions
+   are flagged with a badge, a dashboard metric, and a note.
+- [x] **Auto-refreshing online status.** The console polls a lightweight
+   sessions endpoint and updates the online count and badges without a reload.
+
 ## Features
 
 10. [x] **Live "online now".** RADIUS accounting feeds an "online now" count, an

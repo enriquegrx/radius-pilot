@@ -101,6 +101,34 @@
   filter?.addEventListener("change", applyFilters);
   applyFilters();
 
+  const onlineMetric = document.getElementById("online-now-count");
+  if (onlineMetric) {
+    const refreshSessions = async () => {
+      let data;
+      try {
+        const response = await fetch("/sessions.json", {headers: {"Accept": "application/json"}});
+        if (!response.ok) return;
+        data = await response.json();
+      } catch (_error) { return; }
+      onlineMetric.textContent = data.online_count;
+      rows.forEach((row) => {
+        const info = data.online[row.dataset.username];
+        row.dataset.filterOnline = info ? "online" : "";
+        const badge = row.querySelector(".js-online-badge");
+        if (!badge) return;
+        if (info) {
+          badge.hidden = false;
+          badge.className = "badge js-online-badge " + (info.count > 1 ? "bg-yellow" : "bg-green");
+          badge.textContent = info.count > 1 ? `Online ×${info.count}` : "Online";
+        } else {
+          badge.hidden = true;
+        }
+      });
+      applyFilters();
+    };
+    setInterval(refreshSessions, 20000);
+  }
+
   document.querySelectorAll(".js-duo-mode").forEach((select) => {
     const form = select.closest("form");
     const fields = form?.querySelector(".duo-bypass-fields");
@@ -349,6 +377,13 @@
           field.querySelector(".js-action-generate").addEventListener("click", () => { input.value = generatePassword(); input.type = "text"; });
           field.querySelector(".js-action-copy").addEventListener("click", async (event) => { if (input.value) { await navigator.clipboard.writeText(input.value); event.currentTarget.textContent = "Copied"; } });
         }
+      } else if (action === "disconnect") {
+        title.textContent = `Disconnect ${user}?`;
+        description.textContent = "This asks the gateway to drop the user's live VPN session immediately. They can reconnect unless you also block the account.";
+        field.innerHTML = `<div class="change-summary danger"><span>Live session</span><strong>Force disconnect</strong></div>`;
+        form.action = `/users/${encode(user)}/disconnect`;
+        submit.textContent = "Disconnect session";
+        submit.className = "btn btn-danger";
       } else {
         title.textContent = `Delete ${user}?`;
         description.textContent = "This permanently removes the local VPN credential. The Duo account is not deleted.";

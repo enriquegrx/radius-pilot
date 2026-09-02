@@ -28,9 +28,28 @@ elif sys.argv[1] == "list":
                         "access_avpairs": [],
                         "session": {
                             "ip": "192.0.2.201",
+                            "client_ip": "150.214.205.52",
                             "since": "2026-09-02T07:00:00+00:00",
                             "seconds": 3720,
+                            "bytes_rx": 5242880,
+                            "bytes_tx": 1048576,
+                            "rx": "5.0 MB",
+                            "tx": "1.0 MB",
+                            "session_count": 1,
+                            "sessions": [],
                         },
+                        "connection_history": [
+                            {
+                                "session_id": "000010DA",
+                                "ip": "192.0.2.201",
+                                "since": "2026-09-02T07:00:00+00:00",
+                                "seconds": 3720,
+                                "rx": "5.0 MB",
+                                "tx": "1.0 MB",
+                                "active": True,
+                                "ended_at": None,
+                            }
+                        ],
                         "custom_access_eligible": True,
                         "created_at": "2026-01-01T00:00:00+00:00",
                         "updated_at": "2026-01-01T00:00:00+00:00",
@@ -47,6 +66,8 @@ elif sys.argv[1] == "list":
                     "disk_free_mb": 4096,
                 },
                 "online_count": 1,
+                "concurrent_count": 0,
+                "coa_enabled": True,
                 "accounting_enabled": True,
                 "duo_enrollment_api": {
                     "configured": True,

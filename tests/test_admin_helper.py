@@ -975,6 +975,86 @@ def test_active_sessions_from_accounting_detail(store: Store) -> None:
     assert "stale" not in sessions  # older than the staleness window
 
 
+def test_active_sessions_parse_usage_and_concurrency(store: Store) -> None:
+    detail = (
+        "Tue Sep  2 08:00:00 2026\n"
+        '\tUser-Name = "share"\n\tAcct-Status-Type = Start\n'
+        '\tAcct-Session-Id = "A"\n\tFramed-IP-Address = 192.0.2.10\n'
+        '\tCalling-Station-Id = "203.0.113.9"\n'
+        '\tCisco-AVPair = "audit-session-id=AUDIT-A"\n'
+        "\tNAS-IP-Address = 192.0.2.1\n\n"
+        "Tue Sep  2 08:10:00 2026\n"
+        '\tUser-Name = "share"\n\tAcct-Status-Type = Interim-Update\n'
+        '\tAcct-Session-Id = "A"\n\tFramed-IP-Address = 192.0.2.10\n'
+        "\tAcct-Session-Time = 600\n\tAcct-Output-Octets = 5242880\n"
+        "\tAcct-Input-Octets = 1048576\n\n"
+        "Tue Sep  2 08:05:00 2026\n"
+        '\tUser-Name = "share"\n\tAcct-Status-Type = Start\n'
+        '\tAcct-Session-Id = "B"\n\tFramed-IP-Address = 192.0.2.11\n\n'
+    )
+    store.accounting_detail_path.write_text(detail)
+    sessions = store.active_sessions(now=datetime(2026, 9, 2, 8, 12, 0))
+    entry = sessions["share"]
+    assert entry["session_count"] == 2  # concurrent
+    assert entry["rx"] == "5.0 MB"
+    assert entry["tx"] == "1.0 MB"
+    assert entry["audit_session_id"] == "AUDIT-A"
+    assert {s["session_id"] for s in entry["sessions"]} == {"A", "B"}
+
+
+def test_session_history_orders_and_marks_active(store: Store) -> None:
+    detail = (
+        "Tue Sep  2 06:00:00 2026\n"
+        '\tUser-Name = "u"\n\tAcct-Status-Type = Start\n\tAcct-Session-Id = "OLD"\n\n'
+        "Tue Sep  2 06:30:00 2026\n"
+        '\tUser-Name = "u"\n\tAcct-Status-Type = Stop\n\tAcct-Session-Id = "OLD"\n'
+        "\tAcct-Session-Time = 1800\n\n"
+        "Tue Sep  2 08:00:00 2026\n"
+        '\tUser-Name = "u"\n\tAcct-Status-Type = Start\n\tAcct-Session-Id = "NEW"\n\n'
+    )
+    store.accounting_detail_path.write_text(detail)
+    history = store.session_history("u", now=datetime(2026, 9, 2, 8, 5, 0))
+    assert [h["session_id"] for h in history] == ["NEW", "OLD"]
+    assert history[0]["active"] is True
+    assert history[1]["active"] is False
+
+
+def test_disconnect_session_sends_coa(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RADIUS_ADMIN_COA_TARGET", "192.0.2.1:1700")
+    monkeypatch.setenv("RADIUS_ADMIN_COA_SECRET", "coa-secret")
+    store.accounting_detail_path.write_text(
+        datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+        + '\n\tUser-Name = "kick-me"\n\tAcct-Status-Type = Start\n'
+        '\tAcct-Session-Id = "Z1"\n\tNAS-IP-Address = 192.0.2.1\n'
+        '\tCisco-AVPair = "audit-session-id=AUD-Z"\n\n'
+    )
+    calls = []
+
+    def fake_runner(command, **kwargs):
+        calls.append((command, kwargs.get("input", "")))
+        return subprocess.CompletedProcess(command, 0, "Received Disconnect-ACK", "")
+
+    store.runner = fake_runner
+    count = store.disconnect_session("kick-me")
+    assert count == 1
+    command, payload = calls[0]
+    assert command[0] == "/usr/bin/radclient"
+    assert "disconnect" in command
+    assert 'Acct-Session-Id = "Z1"' in payload
+    assert "audit-session-id=AUD-Z" in payload
+
+
+def test_disconnect_session_requires_configuration(store: Store) -> None:
+    with pytest.raises(AdminError, match="not configured"):
+        store.disconnect_session("anyone")
+
+
+def test_human_bytes_formats() -> None:
+    assert admin_helper.human_bytes(0) == "0 B"
+    assert admin_helper.human_bytes(5 * 1024 * 1024) == "5.0 MB"
+    assert admin_helper.human_bytes(2 * 1024**3) == "2.0 GB"
+
+
 def test_public_list_reports_online_sessions(store: Store) -> None:
     store.accounting_detail_path.write_text(
         datetime.now().strftime("%a %b %d %H:%M:%S %Y")

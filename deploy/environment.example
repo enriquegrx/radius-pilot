@@ -38,3 +38,9 @@ RADIUS_ADMIN_CERT_WARNING_DAYS=21
 # Stop packet cannot pin a user online forever. Set above the gateway's interim
 # accounting interval.
 RADIUS_ADMIN_ACCT_STALE_SECONDS=1800
+
+# Optional. Enables the "Disconnect" button, which asks the gateway to drop a
+# user's live session via RADIUS CoA (Disconnect-Request). Point TARGET at the
+# gateway's dynamic-author listener and use the same key configured there.
+RADIUS_ADMIN_COA_TARGET=172.26.200.1:1700
+RADIUS_ADMIN_COA_SECRET=replace-with-a-strong-shared-secret

@@ -270,7 +270,27 @@ is online while its latest accounting record is not a Stop and is newer than
 user online forever. The dashboard then shows an "Online now" count, an Online
 badge on connected users, and the assigned IP and duration in the user's row.
 
-## 8. Prove it end to end
+## 8. Optional: disconnect a session from the console (RADIUS CoA)
+
+With accounting in place, the console can drop a live session on demand by
+sending a RADIUS Change-of-Authorization Disconnect-Request to the gateway.
+Enable the gateway to accept CoA from `radius01`:
+
+```
+aaa server radius dynamic-author
+ client 172.26.200.112 server-key YOUR-COA-SHARED-SECRET
+ auth-type any
+ port 1700
+```
+
+Then set `RADIUS_ADMIN_COA_TARGET` (the gateway's `ip:1700`) and
+`RADIUS_ADMIN_COA_SECRET` (the same key) in the environment file. RadiusPilot
+sends the Disconnect-Request keyed on the session's `Acct-Session-Id`,
+`NAS-IP-Address` and the Cisco `audit-session-id`, which is what IOS XE matches
+for AnyConnect sessions. The user can reconnect afterwards unless the account
+is also blocked. A "Disconnect" button then appears on each online user.
+
+## 9. Prove it end to end
 
 Follow the safe rollout checklist in the README before trusting custom access
 policies: create a canary account with one narrow rule, connect with

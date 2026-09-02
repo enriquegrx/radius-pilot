@@ -82,6 +82,8 @@ OPERATIONS = {
     "duo-enroll",
     "duo-enrollment",
     "set-duo-enroll-api",
+    "session-history",
+    "disconnect",
     "migrate-passwords",
     "invite-create",
     "invite-list",
@@ -127,6 +129,15 @@ class AdminError(RuntimeError):
 
 def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def human_bytes(count: int) -> str:
+    value = float(count)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{int(value)} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{count} B"
 
 
 def decode_radius(value: str) -> str:
@@ -510,6 +521,7 @@ class Store:
         objects = self._objects_map(data)
         auth = self.last_authentication()
         sessions = self.active_sessions()
+        connections = self.recent_connections(per_user=8)
         panel_admins = self.panel_admin_usernames()
         current_timestamp = int(datetime.now(UTC).timestamp())
         active_enrollments = {
@@ -537,6 +549,7 @@ class Store:
             public["effective_duo_required"] = self._effective_duo_required(item)
             public["last_auth"] = auth.get(item["username"])
             public["session"] = sessions.get(item["username"])
+            public["connection_history"] = connections.get(item["username"], [])
             public["panel_access"] = item["username"] in panel_admins
             public["duo_enrollment_active"] = item["username"] in active_enrollments
             public["credential_scheme"] = (
@@ -572,6 +585,13 @@ class Store:
             "users": users,
             "health": self.health(),
             "online_count": len(sessions),
+            "concurrent_count": sum(
+                1 for entry in sessions.values() if entry.get("session_count", 1) > 1
+            ),
+            "coa_enabled": bool(
+                runtime_setting("RADIUS_ADMIN_COA_TARGET", "").strip()
+                and runtime_setting("RADIUS_ADMIN_COA_SECRET", "").strip()
+            ),
             "accounting_enabled": self.accounting_detail_path.exists(),
             "duo_enrollment_api": self.duo_enroll_api_status(),
             "access_policy": {
@@ -1843,27 +1863,17 @@ class Store:
                 break
         return events
 
-    def active_sessions(self, now: datetime | None = None) -> dict[str, dict[str, Any]]:
-        """Reconstruct currently-online VPN sessions from the FreeRADIUS
-        accounting detail file. A session counts as online when its most recent
-        accounting record is not a Stop and is newer than the staleness window,
-        so a lost Stop cannot pin a user online forever. Keyed by username."""
-        if now is None:
-            now = datetime.now()
+    def _accounting_records(self) -> dict[str, dict[str, Any]]:
+        """Latest accounting record per session id, parsed from the detail file.
+        Returns {session_id: {stamp, status, username, attributes}}."""
         try:
             with self.accounting_detail_path.open("rb") as handle:
                 handle.seek(0, os.SEEK_END)
                 size = handle.tell()
-                handle.seek(max(0, size - 524288))
+                handle.seek(max(0, size - 1048576))
                 text = handle.read().decode("utf-8", errors="replace")
         except OSError:
             return {}
-        try:
-            window = timedelta(
-                seconds=int(runtime_setting("RADIUS_ADMIN_ACCT_STALE_SECONDS", "1800"))
-            )
-        except ValueError:
-            window = timedelta(seconds=1800)
         records: dict[str, dict[str, Any]] = {}
         for block in text.split("\n\n"):
             lines = [line for line in block.splitlines() if line.strip()]
@@ -1872,8 +1882,14 @@ class Store:
             attributes: dict[str, str] = {}
             for line in lines[1:]:
                 key, separator, value = line.strip().partition("=")
-                if separator:
-                    attributes[key.strip()] = value.strip().strip('"')
+                if not separator:
+                    continue
+                key = key.strip()
+                value = value.strip().strip('"')
+                if key == "Cisco-AVPair" and value.startswith("audit-session-id="):
+                    attributes["audit-session-id"] = value.split("=", 1)[1]
+                else:
+                    attributes[key] = value
             session_id = attributes.get("Acct-Session-Id")
             if not session_id:
                 continue
@@ -1881,34 +1897,167 @@ class Store:
                 stamp = datetime.strptime(lines[0].strip(), "%a %b %d %H:%M:%S %Y")
             except ValueError:
                 stamp = None
-            records[session_id] = {"stamp": stamp, "attributes": attributes}
-        online: dict[str, dict[str, Any]] = {}
-        for record in records.values():
-            attributes = record["attributes"]
-            if attributes.get("Acct-Status-Type") == "Stop":
+            # Some identifying attributes (audit-session-id, NAS-IP, the client
+            # address) only appear in the Start record; carry them forward so the
+            # latest record still knows them.
+            previous = records.get(session_id)
+            if previous:
+                for sticky in ("audit-session-id", "NAS-IP-Address", "Calling-Station-Id"):
+                    if sticky not in attributes and sticky in previous["attributes"]:
+                        attributes[sticky] = previous["attributes"][sticky]
+            records[session_id] = {
+                "stamp": stamp,
+                "status": attributes.get("Acct-Status-Type", ""),
+                "username": attributes.get("User-Name", ""),
+                "attributes": attributes,
+            }
+        return records
+
+    @staticmethod
+    def _octets(attributes: dict[str, str], base: str) -> int:
+        try:
+            octets = int(attributes.get(f"Acct-{base}-Octets") or 0)
+            octets += int(attributes.get(f"Acct-{base}-Gigawords") or 0) << 32
+        except ValueError:
+            return 0
+        return octets
+
+    def _session_view(self, session_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        attributes = record["attributes"]
+        stamp = record["stamp"]
+        try:
+            seconds = int(attributes.get("Acct-Session-Time") or 0)
+        except ValueError:
+            seconds = 0
+        rx = self._octets(attributes, "Output")
+        tx = self._octets(attributes, "Input")
+        return {
+            "session_id": session_id,
+            "ip": attributes.get("Framed-IP-Address", ""),
+            "client_ip": attributes.get("Calling-Station-Id", ""),
+            "nas_ip": attributes.get("NAS-IP-Address", ""),
+            "audit_session_id": attributes.get("audit-session-id", ""),
+            "since": stamp.isoformat() if stamp else None,
+            "stamp": stamp,
+            "seconds": seconds,
+            "bytes_rx": rx,
+            "bytes_tx": tx,
+            "rx": human_bytes(rx),
+            "tx": human_bytes(tx),
+        }
+
+    def active_sessions(self, now: datetime | None = None) -> dict[str, dict[str, Any]]:
+        """Currently-online VPN sessions keyed by username. A session is online
+        while its latest accounting record is not a Stop and is newer than the
+        staleness window, so a lost Stop cannot pin a user online forever. Each
+        entry carries the most recent session's fields plus session_count (for
+        concurrency) and the full list of that user's active sessions."""
+        if now is None:
+            now = datetime.now()
+        try:
+            window = timedelta(
+                seconds=int(runtime_setting("RADIUS_ADMIN_ACCT_STALE_SECONDS", "1800"))
+            )
+        except ValueError:
+            window = timedelta(seconds=1800)
+        by_user: dict[str, list[dict[str, Any]]] = {}
+        for session_id, record in self._accounting_records().items():
+            if record["status"] == "Stop":
                 continue
             stamp = record["stamp"]
             if stamp is not None and now - stamp > window:
                 continue
-            username = attributes.get("User-Name")
+            username = record["username"]
             if not username:
                 continue
-            try:
-                seconds = int(attributes.get("Acct-Session-Time") or 0)
-            except ValueError:
-                seconds = 0
-            existing = online.get(username)
-            if existing and existing["stamp"] and stamp and existing["stamp"] >= stamp:
-                continue
-            online[username] = {
-                "ip": attributes.get("Framed-IP-Address", ""),
-                "since": stamp.isoformat() if stamp else None,
-                "seconds": seconds,
-                "stamp": stamp,
-            }
-        for entry in online.values():
-            entry.pop("stamp", None)
+            by_user.setdefault(username, []).append(self._session_view(session_id, record))
+        online: dict[str, dict[str, Any]] = {}
+        for username, sessions in by_user.items():
+            sessions.sort(key=lambda item: item["stamp"] or datetime.min, reverse=True)
+            primary = dict(sessions[0])
+            primary["session_count"] = len(sessions)
+            primary["sessions"] = [
+                {key: value for key, value in item.items() if key != "stamp"}
+                for item in sessions
+            ]
+            primary.pop("stamp", None)
+            online[username] = primary
         return online
+
+    def recent_connections(
+        self, now: datetime | None = None, per_user: int = 10
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Recent connections per user reconstructed from accounting in a single
+        pass, newest first: start, end (or active), duration, IP and data usage."""
+        if now is None:
+            now = datetime.now()
+        try:
+            window = timedelta(
+                seconds=int(runtime_setting("RADIUS_ADMIN_ACCT_STALE_SECONDS", "1800"))
+            )
+        except ValueError:
+            window = timedelta(seconds=1800)
+        grouped: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
+        for session_id, record in self._accounting_records().items():
+            username = record["username"]
+            if not username:
+                continue
+            view = self._session_view(session_id, record)
+            stopped = record["status"] == "Stop"
+            stale = record["stamp"] is not None and now - record["stamp"] > window
+            view["active"] = not stopped and not stale
+            view["ended_at"] = view["since"] if stopped else None
+            grouped.setdefault(username, []).append((record["stamp"] or datetime.min, view))
+        result: dict[str, list[dict[str, Any]]] = {}
+        for username, views in grouped.items():
+            views.sort(key=lambda item: item[0], reverse=True)
+            result[username] = [
+                {key: value for key, value in view.items() if key != "stamp"}
+                for _stamp, view in views[:per_user]
+            ]
+        return result
+
+    def session_history(
+        self, username: object, now: datetime | None = None, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        clean = clean_username(username)
+        return self.recent_connections(now=now, per_user=limit).get(clean, [])
+
+    def disconnect_session(self, username: object) -> int:
+        """Ask the gateway to drop a user's live session(s) via RADIUS CoA
+        (Disconnect-Request). Requires RADIUS_ADMIN_COA_TARGET and
+        RADIUS_ADMIN_COA_SECRET, and dynamic-author configured on the gateway."""
+        clean = clean_username(username)
+        target = runtime_setting("RADIUS_ADMIN_COA_TARGET", "").strip()
+        secret = runtime_setting("RADIUS_ADMIN_COA_SECRET", "").strip()
+        if not target or not secret:
+            raise AdminError("Session disconnect is not configured (RADIUS CoA).")
+        sessions = self.active_sessions().get(clean, {}).get("sessions", [])
+        if not sessions:
+            raise AdminError("That account has no live session to disconnect.")
+        disconnected = 0
+        for session in sessions:
+            lines = [f'User-Name = "{clean}"']
+            if session.get("nas_ip"):
+                lines.append(f'NAS-IP-Address = {session["nas_ip"]}')
+            if session.get("session_id"):
+                lines.append(f'Acct-Session-Id = "{session["session_id"]}"')
+            if session.get("audit_session_id"):
+                lines.append(
+                    f'Cisco-AVPair = "audit-session-id={session["audit_session_id"]}"'
+                )
+            result = self.runner(
+                ["/usr/bin/radclient", "-t", "5", "-r", "1", target, "disconnect", secret],
+                input="\n".join(lines) + "\n",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0 and "Disconnect-ACK" in (result.stdout or ""):
+                disconnected += 1
+        if not disconnected:
+            raise AdminError("The gateway did not acknowledge the disconnect.")
+        return disconnected
 
     def list_backups(self, limit: int = 20) -> list[dict[str, Any]]:
         if not self.backup_dir.exists():
@@ -2392,6 +2541,10 @@ def main() -> int:
         elif args.operation == "set-duo-enroll-api":
             store.set_duo_enroll_api(payload)
             result = {}
+        elif args.operation == "session-history":
+            result = {"history": store.session_history(payload.get("username"))}
+        elif args.operation == "disconnect":
+            result = {"disconnected": store.disconnect_session(payload.get("username"))}
         elif args.operation == "migrate-passwords":
             result = {"migrated": store.migrate_passwords(payload.get("username"))}
         elif args.operation == "invite-create":
@@ -2459,6 +2612,7 @@ def main() -> int:
             "set-panel-access",
             "duo-enroll",
             "set-duo-enroll-api",
+            "disconnect",
             "migrate-passwords",
             "invite-create",
             "invite-accept",

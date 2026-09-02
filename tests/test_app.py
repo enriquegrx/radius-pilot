@@ -286,7 +286,28 @@ def _rich_list_payload() -> dict:
                     "ip:inacl#1=permit tcp any host 192.0.2.10 eq 443",
                     "ip:inacl#2=deny ip any any",
                 ],
-                "session": {"ip": "192.0.2.201", "since": None, "seconds": 3720},
+                "session": {
+                    "ip": "192.0.2.201",
+                    "client_ip": "150.214.205.52",
+                    "since": "2026-09-02T07:00:00+00:00",
+                    "seconds": 3720,
+                    "rx": "5.0 MB",
+                    "tx": "1.0 MB",
+                    "session_count": 2,
+                    "sessions": [],
+                },
+                "connection_history": [
+                    {
+                        "session_id": "000010DA",
+                        "ip": "192.0.2.201",
+                        "since": "2026-09-02T07:00:00+00:00",
+                        "seconds": 3720,
+                        "rx": "5.0 MB",
+                        "tx": "1.0 MB",
+                        "active": True,
+                        "ended_at": None,
+                    }
+                ],
                 "custom_access_eligible": True,
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "updated_at": "2026-09-01T00:00:00+00:00",
@@ -326,6 +347,8 @@ def _rich_list_payload() -> dict:
             "disk_free_mb": 512,
         },
         "online_count": 1,
+        "concurrent_count": 1,
+        "coa_enabled": True,
         "accounting_enabled": True,
         "duo_enrollment_api": {
             "configured": True,
@@ -433,11 +456,72 @@ def test_dashboard_render_smoke(monkeypatch) -> None:
         "pending-user",
         "reset-password",
         "Online now",
-        ">Online<",
         'value="online"',
         'data-filter-online="online"',
+        "Concurrent",
+        "Recent connections",
+        "5.0 MB",
+        'data-row-action="disconnect"',
     ):
         assert marker in response.text, marker
+
+
+def test_sessions_json_returns_online(monkeypatch) -> None:
+    def online_helper(operation: str, payload=None):
+        if operation == "list":
+            data = fake_helper("list", payload)
+            data["online_count"] = 1
+            data["accounting_enabled"] = True
+            data["concurrent_count"] = 0
+            data["users"][0]["session"] = {"ip": "192.0.2.5", "session_count": 1}
+            return data
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", online_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    token = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    client.post(
+        "/login",
+        data={"csrf": token, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    response = client.get("/sessions.json")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["online_count"] == 1
+    assert body["accounting_enabled"] is True
+    assert "vpn-test-user" in body["online"]
+
+
+def test_sessions_json_requires_login() -> None:
+    assert TestClient(app_module.app).get("/sessions.json").status_code == 401
+
+
+def test_disconnect_route_forwards_to_helper(monkeypatch) -> None:
+    calls = []
+
+    def recording_helper(operation: str, payload=None):
+        if operation == "disconnect":
+            calls.append(payload)
+            return {"ok": True, "disconnected": 2}
+        return fake_helper(operation, payload)
+
+    monkeypatch.setattr(app_module, "call_helper", recording_helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    dashboard = client.post(
+        "/login",
+        data={"csrf": login_csrf, "username": "admin", "password": "test-password"},
+        follow_redirects=True,
+    )
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/users/demo-user/disconnect", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert calls[0]["username"] == "demo-user"
 
 
 def test_logout_survives_an_expired_csrf_token(monkeypatch) -> None:

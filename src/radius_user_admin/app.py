@@ -378,6 +378,8 @@ def index(request: Request):
             "expiring_count": sum(user["expires_soon"] for user in users),
             "online_count": data.get("online_count", 0) if not error else 0,
             "accounting_enabled": bool(data.get("accounting_enabled")) if not error else False,
+            "concurrent_count": data.get("concurrent_count", 0) if not error else 0,
+            "coa_enabled": bool(data.get("coa_enabled")) if not error else False,
             "custom_access_enabled": bool(access_policy.get("custom_enabled")),
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
             "access_objects": access_policy.get("objects", []),
@@ -395,6 +397,51 @@ def index(request: Request):
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/sessions.json")
+def sessions_json(request: Request):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return Response(status_code=401)
+    try:
+        data = call_helper("list", helper_payload(request, {}))
+    except HelperError:
+        return Response(status_code=503)
+    online = {
+        user["username"]: {
+            "ip": (user.get("session") or {}).get("ip", ""),
+            "count": (user.get("session") or {}).get("session_count", 1),
+        }
+        for user in data["users"]
+        if user.get("session")
+    }
+    return {
+        "accounting_enabled": bool(data.get("accounting_enabled")),
+        "online_count": data.get("online_count", 0),
+        "concurrent_count": data.get("concurrent_count", 0),
+        "online": online,
+    }
+
+
+@app.post("/users/{username}/disconnect")
+def disconnect_user(username: str, request: Request, csrf: str = Form()):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    try:
+        check_csrf(request, csrf)
+        count = call_helper(
+            "disconnect", helper_payload(request, {"username": username})
+        )["disconnected"]
+        return redirect(
+            request,
+            f"Disconnect request sent for {count} session(s) of {username}.",
+            "success",
+            "users",
+        )
+    except HelperError as exc:
+        return redirect(request, str(exc), "danger", "users")
 
 
 @app.post("/invitations")
