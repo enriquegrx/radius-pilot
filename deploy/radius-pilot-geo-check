@@ -1,0 +1,100 @@
+#!/usr/bin/python3
+"""RadiusPilot country-access enforcement, called by FreeRADIUS (rlm_exec).
+
+Usage (argv): <username> [<client-ip>]
+
+It reads the compiled per-user allow-lists that the console writes and, ONLY when
+the policy mode is "enforce", prints ``Auth-Type := Reject`` to stdout (which the
+exec module adds to the control list) for a login from a disallowed country.
+
+Fail-safe by construction: a missing policy file, any non-enforce mode, an
+unresolved/private IP under fail-open, or ANY exception results in allowing the
+login. This runs in the live authentication path and must never block a login by
+accident.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+APP_SOURCE = os.environ.get("RADIUS_ADMIN_APP_SOURCE", "/opt/radius-user-admin/src")
+POLICY_PATH = os.environ.get(
+    "RADIUS_ADMIN_GEO_POLICY_PATH", "/etc/freeradius/3.0/radius-pilot-geo-policy.json"
+)
+AUDIT_PATH = os.environ.get(
+    "RADIUS_ADMIN_GEO_AUDIT_PATH", "/var/log/freeradius/radius-pilot-geo.log"
+)
+
+
+def _log(entry: dict) -> None:
+    try:
+        with open(AUDIT_PATH, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def _decide() -> bool:
+    """Return True only when the login should be rejected."""
+    username = sys.argv[1] if len(sys.argv) > 1 else ""
+    client_ip = sys.argv[2] if len(sys.argv) > 2 else ""
+
+    try:
+        with open(POLICY_PATH, encoding="utf-8") as handle:
+            policy = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    mode = policy.get("mode") if isinstance(policy, dict) else None
+    if mode not in ("monitor", "enforce"):
+        return False  # "off" or unknown: do nothing at all
+
+    if APP_SOURCE not in sys.path:
+        sys.path.insert(0, APP_SOURCE)
+    try:
+        from radius_user_admin import geo_policy, geoip
+    except Exception:
+        return False
+
+    try:
+        country = geoip.country_of(client_ip)
+        entry = policy.get("users", {}).get(username) or policy.get("default", {})
+        allowed = set(entry.get("allowed", []))
+        fail_open = bool(entry.get("fail_open", True))
+        decision = geo_policy.decide(country, allowed, fail_open)
+    except Exception:
+        return False
+
+    blocked = geo_policy.is_block(decision)
+    # Log in both modes so operators can confirm the hook sees the real client IP
+    # (and what it would decide) before switching to enforce.
+    _log(
+        {
+            "user": username,
+            "ip": client_ip,
+            "country": country or "",
+            "decision": decision,
+            "blocked": blocked,
+            "mode": mode,
+        }
+    )
+    # Only enforce mode rejects; monitor mode logs but always allows.
+    return blocked and mode == "enforce"
+
+
+def main() -> int:
+    if _decide():
+        # Added to the control list via `output_pairs = control`; rejects the
+        # login before the Duo push in the site's authorize section.
+        sys.stdout.write("Auth-Type := Reject\n")
+        sys.stdout.write('Reply-Message := "Access from your location is not permitted."\n')
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        # Absolutely never block a login because of an error in this hook.
+        sys.exit(0)

@@ -142,7 +142,11 @@ needs a GeoLite2 database.
     recent authentications and live sessions, entirely from the Duo proxy's auth
     log — no change to the auth path, zero lock-out risk. Shows a "would block"
     feed and a per-user country policy tile.
-36. [ ] **Enforcement (FreeRADIUS hook).** A geo-check called from FreeRADIUS
-    `authorize` that rejects disallowed countries before the Duo push, driven by
-    the compiled per-user allow-lists RadiusPilot already writes. Flip from
-    monitor to enforce once the monitor feed shows no false positives.
+36. [x] **Enforcement (FreeRADIUS hook).** `deploy/radius-pilot-geo-check`, a
+    fail-safe rlm_exec hook, rejects disallowed countries before the Duo push,
+    driven by the per-user allow-lists RadiusPilot compiles to
+    `radius-pilot-geo-policy.json` on every change. It logs in monitor mode and
+    only rejects in enforce mode; any error, timeout or non-enforce mode allows
+    the login. Worldwide country resolution uses an optional GeoLite2 mmdb
+    (`RADIUS_ADMIN_GEOIP_MMDB`). Wiring it into a site stays a deliberate manual
+    step (`deploy/freeradius-geo-check.conf`).

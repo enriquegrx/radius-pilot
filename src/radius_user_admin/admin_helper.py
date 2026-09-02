@@ -332,7 +332,7 @@ class Store:
         duo_enroll_config_path: Path = Path("/etc/radius-user-admin/duo-enroll-api.json"),
         monitor_path: Path = Path("/var/lib/radius-user-admin/monitor.json"),
         geo_settings_path: Path = Path("/var/lib/radius-user-admin/geo.json"),
-        geo_compiled_path: Path = Path("/etc/radius-user-admin/geo-policy.json"),
+        geo_compiled_path: Path = Path("/etc/freeradius/3.0/radius-pilot-geo-policy.json"),
         policy_destinations: str | None = None,
         local_fallback_users: str | None = None,
         custom_dacl_enabled: bool | None = None,
@@ -1326,16 +1326,19 @@ class Store:
                 self._fail_closed_authorize()
                 raise
             self._commit(data)
+        self.compile_geo_policy()
 
     def reconcile(self) -> list[str]:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
-                return self._reconcile_locked()
+                changes = self._reconcile_locked()
             except (AdminError, OSError, json.JSONDecodeError):
                 self._fail_closed_authorize()
                 raise
+        self.compile_geo_policy()
+        return changes
 
     def _fail_closed_authorize(self) -> None:
         old_authorize = self.authorize_path.read_bytes()

@@ -81,6 +81,11 @@ fi
 
 say "Installing the privileged helper and its sudoers rule"
 install -o root -g root -m 750 "$SCRIPT_DIR/radius-user-admin-helper" "$HELPER"
+# The geo-fencing enforcement hook is world-executable so FreeRADIUS (freerad)
+# can run it. It stays inert until wired into a FreeRADIUS site and switched to
+# enforce mode (see deploy/freeradius-geo-check.conf).
+install -o root -g root -m 755 "$SCRIPT_DIR/radius-pilot-geo-check" \
+    /usr/local/sbin/radius-pilot-geo-check
 install -o root -g root -m 440 "$SCRIPT_DIR/radius-user-admin.sudoers" \
     /etc/sudoers.d/radius-user-admin
 visudo -cf /etc/sudoers.d/radius-user-admin >/dev/null \
@@ -117,6 +122,7 @@ cat <<EOF
   - Nginx:     $SCRIPT_DIR/nginx-radius-user-admin.conf   (restrict source networks, add TLS)
   - Firewall:  $SCRIPT_DIR/nftables.conf                  (loopback app, HTTPS + RADIUS allowlist)
   - FreeRADIUS/Duo/accounting/CoA and the certificate: see docs/cisco-isr-freeradius.md
+  - Geo-fencing enforcement (optional): $SCRIPT_DIR/freeradius-geo-check.conf  (wire into the primary-auth site; needs a GeoLite2 mmdb for worldwide coverage)
 EOF
 
 cat <<EOF

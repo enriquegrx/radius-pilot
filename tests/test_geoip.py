@@ -165,3 +165,13 @@ def test_bad_input_returns_none_without_raising(bad: str) -> None:
 def test_non_string_input_returns_none() -> None:
     assert locate(None) is None  # type: ignore[arg-type]
     assert locate(12345) is None  # type: ignore[arg-type]
+
+
+def test_country_of_uses_known_networks_and_guards() -> None:
+    assert geoip.country_of("150.214.205.52") == "ES"  # UGR / Granada
+    assert geoip.country_of("8.8.8.8") == "US"  # Google DNS, known net
+    assert geoip.country_of("10.0.0.5") is None  # private
+    assert geoip.country_of("::1") is None  # loopback
+    assert geoip.country_of("203.0.113.7") is None  # documentation range, unresolved
+    assert geoip.country_of("") is None
+    assert geoip.country_of("not-an-ip") is None

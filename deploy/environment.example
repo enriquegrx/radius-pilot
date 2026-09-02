@@ -55,3 +55,10 @@ RADIUS_ADMIN_SITE_LAT=37.1773
 RADIUS_ADMIN_SITE_LON=-3.5986
 RADIUS_ADMIN_SITE_LABEL=Gateway
 # RADIUS_ADMIN_GEOIP_CSV=/etc/radius-user-admin/geoip.csv
+# For country-based access enforcement (geo-fencing), point this at a GeoLite2
+# Country .mmdb (install python3-maxminddb). It gives fast, worldwide IP-to-
+# country resolution for the per-authentication hook; without it only well-known
+# ranges resolve and everything else is treated as unlocated (allowed under
+# fail-open). Set the same variable in the FreeRADIUS service environment so the
+# geo-check hook can read it.
+# RADIUS_ADMIN_GEOIP_MMDB=/etc/radius-user-admin/GeoLite2-Country.mmdb

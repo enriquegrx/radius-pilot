@@ -30,6 +30,13 @@ IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 # Environment variable that may point at a GeoLite2-style CSV export.
 CSV_ENV_VAR = "RADIUS_ADMIN_GEOIP_CSV"
 
+# Environment variable that may point at a GeoLite2 Country/City .mmdb database.
+# When present it is preferred: memory-mapped lookups are cheap per call, which
+# matters for the per-authentication enforcement hook.
+MMDB_ENV_VAR = "RADIUS_ADMIN_GEOIP_MMDB"
+
+_mmdb_reader_cache: dict[tuple[str, float], object] = {}
+
 # RFC1918 / loopback / link-local / CGNAT (RFC6598) / IPv6 unique-local ranges.
 # These are matched explicitly instead of relying on ``ip_address.is_private``
 # so that documentation ranges (e.g. 203.0.113.0/24) are *not* treated as
@@ -529,6 +536,84 @@ def _private_result() -> dict:
     }
 
 
+def _mmdb_country(addr_text: str) -> str | None:
+    """ISO-3166 alpha-2 country for ``addr_text`` from a GeoLite2 .mmdb, or None.
+    Uses the optional ``maxminddb`` module; any failure returns None so callers
+    fall back gracefully."""
+    path = os.environ.get(MMDB_ENV_VAR, "").strip()
+    if not path:
+        return None
+    try:
+        import maxminddb
+    except Exception:
+        return None
+    try:
+        stamp = os.stat(path).st_mtime
+    except OSError:
+        return None
+    key = (path, stamp)
+    reader = _mmdb_reader_cache.get(key)
+    if reader is None:
+        try:
+            reader = maxminddb.open_database(path)
+        except Exception:
+            return None
+        _mmdb_reader_cache.clear()
+        _mmdb_reader_cache[key] = reader
+    try:
+        record = reader.get(addr_text)
+    except Exception:
+        return None
+    if not isinstance(record, dict):
+        return None
+    for section in ("country", "registered_country", "represented_country"):
+        code = (record.get(section) or {}).get("iso_code")
+        if code:
+            return str(code).upper()
+    return None
+
+
+def _mmdb_result(addr_text: str) -> dict | None:
+    country = _mmdb_country(addr_text)
+    if not country:
+        return None
+    centroid = country_centroid(country)
+    if not centroid:
+        return None
+    lat, lon, name = centroid
+    return {
+        "lat": lat,
+        "lon": lon,
+        "country": country,
+        "country_name": name,
+        "city": "",
+        "source": "mmdb",
+        "private": False,
+    }
+
+
+def country_of(ip: str) -> str | None:
+    """Fast ISO-3166 alpha-2 country lookup for the enforcement hook. Prefers the
+    GeoLite2 mmdb, then the CSV / known-network tables. Returns None for private,
+    invalid, or unresolved addresses (the caller treats None as 'unlocated')."""
+    if not isinstance(ip, str) or not ip.strip():
+        return None
+    text = ip.strip()
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    if _is_private(addr):
+        return None
+    country = _mmdb_country(text)
+    if country:
+        return country
+    located = locate(text)
+    if located and not located.get("private"):
+        return located.get("country") or None
+    return None
+
+
 def locate(ip: str) -> dict | None:
     """Resolve ``ip`` (IPv4 or IPv6) to an approximate location.
 
@@ -564,4 +649,4 @@ def locate(ip: str) -> dict | None:
         if result is not None:
             return result
 
-    return None
+    return _mmdb_result(text)
