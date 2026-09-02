@@ -175,6 +175,16 @@ and a single sudoers entry. Do not bind Uvicorn to a LAN address or add public
 NAT. Certificate issuance and renewal use DNS-01 on `pki01`; the deploy hook
 copies the renewed files to `radius01`, tests Nginx, and reloads it.
 
+From a checkout on the target host, `sudo deploy/install.sh` installs the
+application, the `radiusui` service account, the root helper and its sudoers
+rule, the systemd unit and reconciliation timer, and the root-only state
+directory. It is idempotent, never overwrites an existing environment file or
+state, and leaves the site-specific pieces — Nginx, TLS, nftables, FreeRADIUS,
+Duo, and the router — to be applied by hand (their example files sit in
+`deploy/`, and the Cisco/FreeRADIUS steps are in
+[docs/cisco-isr-freeradius.md](docs/cisco-isr-freeradius.md)). It then prints
+the bootstrap and enable commands.
+
 Copy `deploy/environment.example` to `/etc/radius-user-admin/environment`, set a
 random session secret and the real HTTPS URL, then keep the file readable only
 by root and the service account. SMTP is optional. Without it, a newly created

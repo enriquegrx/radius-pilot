@@ -71,9 +71,9 @@ Items are checked off as they ship.
 
 ## Adoption
 
-18. [ ] **Debian-native installer.** Automate the runbook with the same
-    validations so the public repository is straightforward to deploy.
-19. [ ] **Screenshots in the README.** A picture of the console alongside the
-    feature list.
-20. [ ] **Contributor guide and higher coverage gate.** A `CONTRIBUTING.md`
-    and a raised coverage floor (currently 55%, actual is higher).
+18. [x] **Debian-native installer.** `deploy/install.sh` installs the app, the
+    service account, the helper and its sudoers rule, the systemd unit and
+    timer, and the state directory, idempotently and with validation.
+19. [x] **Screenshots in the README.** The console and the sign-in page.
+20. [x] **Contributor guide and higher coverage gate.** `CONTRIBUTING.md` and a
+    coverage floor raised to 65% (actual ~69%).
