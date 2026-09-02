@@ -102,6 +102,7 @@ def fake_helper(operation: str, _payload=None):
             "custom_enabled": False,
             "avpair_forwarding": True,
             "gate_enabled": False,
+            "destinations_explicit": True,
             "allowed_destinations": ["192.0.2.0/24"],
             "objects": [
                 {
@@ -362,6 +363,7 @@ def _rich_list_payload() -> dict:
             "custom_enabled": True,
             "avpair_forwarding": True,
             "gate_enabled": True,
+            "destinations_explicit": True,
             "allowed_destinations": ["192.0.2.0/24"],
             "objects": [
                 {

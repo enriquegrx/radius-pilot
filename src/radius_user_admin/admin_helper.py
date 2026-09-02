@@ -333,9 +333,11 @@ class Store:
         self.duo_enroll_config_path = duo_enroll_config_path
         self.monitor_path = monitor_path
         if policy_destinations is None:
-            policy_destinations = runtime_setting(
-                "RADIUS_ADMIN_POLICY_DESTINATIONS", DEFAULT_ALLOWED_DESTINATIONS
-            )
+            configured = runtime_setting("RADIUS_ADMIN_POLICY_DESTINATIONS", "").strip()
+            self.policy_destinations_explicit = bool(configured)
+            policy_destinations = configured or DEFAULT_ALLOWED_DESTINATIONS
+        else:
+            self.policy_destinations_explicit = True
         try:
             self.policy_destinations = allowed_destinations(policy_destinations)
         except AccessPolicyError as exc:
@@ -626,6 +628,7 @@ class Store:
                 "custom_enabled": self._custom_dacl_ready(),
                 "avpair_forwarding": self._duo_passes_cisco_avpair(),
                 "gate_enabled": self.custom_dacl_enabled,
+                "destinations_explicit": self.policy_destinations_explicit,
                 "allowed_destinations": [item.with_prefixlen for item in self.policy_destinations],
                 "objects": [
                     {
@@ -1664,7 +1667,13 @@ class Store:
         return "cisco-avpair" in names
 
     def _custom_dacl_ready(self) -> bool:
-        return self.custom_dacl_enabled and self._duo_passes_cisco_avpair()
+        # Custom access stays gated until the destination allowlist is narrowed
+        # explicitly: never compile policies against the whole of RFC1918.
+        return (
+            self.custom_dacl_enabled
+            and self.policy_destinations_explicit
+            and self._duo_passes_cisco_avpair()
+        )
 
     def _reject_local_fallback_policy(
         self, username: str, policy: dict[str, Any]

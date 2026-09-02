@@ -49,6 +49,19 @@ ALLOWED_HOSTS = [
 ORGANIZATION = os.environ.get("RADIUS_ADMIN_ORGANIZATION", "Your Organization").strip()
 
 
+def _read_version() -> str:
+    configured = os.environ.get("RADIUS_ADMIN_VERSION", "").strip()
+    if configured:
+        return configured
+    try:
+        return (BASE.parent.parent / "VERSION").read_text().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+APP_VERSION = _read_version()
+
+
 def common_template_context(_request: Request) -> dict[str, str]:
     return {"organization": ORGANIZATION or "Your Organization"}
 
@@ -391,12 +404,14 @@ def index(request: Request):
             "concurrent_count": data.get("concurrent_count", 0) if not error else 0,
             "coa_enabled": bool(data.get("coa_enabled")) if not error else False,
             "is_auditor": is_auditor(request),
+            "app_version": APP_VERSION,
             "custom_access_enabled": bool(access_policy.get("custom_enabled")),
             "allowed_policy_destinations": access_policy.get("allowed_destinations", []),
             "access_objects": access_policy.get("objects", []),
             "duo_enrollment_api": duo_enrollment_api,
             "avpair_forwarding": bool(access_policy.get("avpair_forwarding")),
             "custom_gate_enabled": bool(access_policy.get("gate_enabled")),
+            "destinations_explicit": bool(access_policy.get("destinations_explicit")),
             "smtp_configured": bool(os.environ.get("RADIUS_ADMIN_SMTP_HOST", "").strip()),
             "legacy_count": sum(
                 user.get("credential_scheme") == "legacy-cleartext" for user in users

@@ -283,6 +283,99 @@ def test_invalid_role_is_rejected(store: Store) -> None:
         admin_helper.clean_admin_role("superuser")
 
 
+def test_restore_backup_reverts_state(store: Store) -> None:
+    # The bootstrap plus this create leave a backup of the single-user state.
+    store.mutate(
+        "create",
+        {"username": "temp", "password": "a-safe-password-2026", "duo_required": True},
+    )
+    backups = store.list_backups()
+    assert backups, "a mutation should have created a backup"
+    oldest = backups[-1]["name"]  # the pre-create snapshot
+    store.restore_backup(oldest)
+    users = {u["username"] for u in store.load()["users"]}
+    assert users == {"vpn-test-user"}
+    assert "temp" not in store.authorize_path.read_text()
+
+
+def test_restore_rejects_invalid_backup_name(store: Store) -> None:
+    with pytest.raises(AdminError, match="Invalid backup identifier"):
+        store.restore_backup("../etc/passwd")
+    with pytest.raises(AdminError, match="Backup not found"):
+        store.restore_backup("20260101T000000000000Z")
+
+
+def test_restore_rejects_a_backup_with_no_enabled_users(store: Store, tmp_path) -> None:
+    name = "20260101T000000000000Z"
+    dest = store.backup_dir / name
+    dest.mkdir(parents=True)
+    (dest / "users.json").write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "users": [
+                    {
+                        "username": "blocked-only",
+                        "nt_password": "0" * 32,
+                        "enabled": False,
+                        "duo_required": True,
+                        "expires_at": None,
+                        "duo_bypass_until": None,
+                        "duo_bypass_reason": "",
+                        "access_policy": {"mode": "full", "rules": []},
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+    )
+    with pytest.raises(AdminError, match="no enabled"):
+        store.restore_backup(name)
+
+
+def test_restore_rejects_a_backup_with_corrupt_policy(store: Store) -> None:
+    name = "20260101T000000000001Z"
+    dest = store.backup_dir / name
+    dest.mkdir(parents=True)
+    (dest / "users.json").write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "users": [
+                    {
+                        "username": "vpn-test-user",
+                        "nt_password": "0" * 32,
+                        "enabled": True,
+                        "duo_required": True,
+                        "expires_at": None,
+                        "duo_bypass_until": None,
+                        "duo_bypass_reason": "",
+                        "access_policy": None,
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+    )
+    with pytest.raises(AdminError, match="corrupt"):
+        store.restore_backup(name)
+
+
+def test_custom_access_stays_gated_without_explicit_destinations(store: Store) -> None:
+    store.custom_dacl_enabled = True
+    store.policy_destinations_explicit = False
+    config = store.duo_config_path.read_text().replace(
+        "port=18120", "port=18120\npass_through_attr_names=Cisco-AVPair"
+    )
+    store.duo_config_path.write_text(config)
+    policy = store.public_list()["access_policy"]
+    assert policy["gate_enabled"] is True
+    assert policy["destinations_explicit"] is False
+    assert policy["custom_enabled"] is False  # withheld until destinations narrowed
+
+
 def test_note_is_stored_and_shown(store: Store) -> None:
     store.mutate(
         "create",
@@ -626,6 +719,7 @@ def custom_policy() -> dict[str, object]:
 
 def enable_custom_access(store: Store) -> None:
     store.custom_dacl_enabled = True
+    store.policy_destinations_explicit = True
     config = store.duo_config_path.read_text().replace(
         "port=18120", "port=18120\npass_through_attr_names=Cisco-AVPair"
     )

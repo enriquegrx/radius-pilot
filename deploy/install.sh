@@ -71,6 +71,14 @@ find "$SRC_DIR" -type d -exec chmod 755 {} +
 find "$SRC_DIR" -type f -exec chmod 644 {} +
 python3 -m compileall -q "$SRC_DIR" || die "The application source failed to compile."
 
+# Record the deployed version so the console can show what is running.
+if git -C "$REPO_DIR" rev-parse HEAD >/dev/null 2>&1; then
+    git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null \
+        > "$APP_DIR/VERSION" 2>/dev/null \
+        || git -C "$REPO_DIR" rev-parse --short HEAD > "$APP_DIR/VERSION"
+    chmod 644 "$APP_DIR/VERSION"
+fi
+
 say "Installing the privileged helper and its sudoers rule"
 install -o root -g root -m 750 "$SCRIPT_DIR/radius-user-admin-helper" "$HELPER"
 install -o root -g root -m 440 "$SCRIPT_DIR/radius-user-admin.sudoers" \
