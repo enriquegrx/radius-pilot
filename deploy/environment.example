@@ -44,3 +44,14 @@ RADIUS_ADMIN_ACCT_STALE_SECONDS=1800
 # gateway's dynamic-author listener and use the same key configured there.
 RADIUS_ADMIN_COA_TARGET=172.26.200.1:1700
 RADIUS_ADMIN_COA_SECRET=replace-with-a-strong-shared-secret
+
+# Optional. The Overview map and the /wall display place each live session by
+# its client IP. Set the gateway's own coordinates and label for the map's home
+# marker (defaults to Granada). Point GEOIP_CSV at a CSV to resolve any public
+# IP (columns: network,latitude,longitude,country_iso,country_name,city — e.g.
+# exported from MaxMind GeoLite2); without it, only well-known ranges resolve and
+# the rest are reported as "unlocated". Private/LAN clients are never plotted.
+RADIUS_ADMIN_SITE_LAT=37.1773
+RADIUS_ADMIN_SITE_LON=-3.5986
+RADIUS_ADMIN_SITE_LABEL=Gateway
+# RADIUS_ADMIN_GEOIP_CSV=/etc/radius-user-admin/geoip.csv

@@ -109,3 +109,23 @@ Items are checked off as they ship.
     against the expected baseline and alert on drift.
 28. [ ] **Periodic usage report.** A weekly or monthly email/CSV: who connected,
     how much data, and session counts.
+
+## Visual dashboard (shipped 2026-09-02)
+
+An Overview tab and a full-screen `/wall` NOC display, all rendered as
+dependency-free inline SVG from a single accounting-derived `dashboard` payload
+(no database, no CDN, no charting library):
+
+29. [x] **Live connection map.** Sessions geolocated from their client IP
+    (offline resolver in `geoip.py`; optional GeoLite2 CSV) and plotted with
+    pulsing dots and arcs to the gateway. Private/LAN clients are not plotted.
+30. [x] **NOC wall display.** `/wall` — a dark, auto-refreshing operations board
+    with big KPIs, the map, the auth-path diagram and a live session list.
+31. [x] **Usage and session charts.** Concurrent-sessions-over-24h area,
+    connections-by-hour and last-14-days bars, top talkers, and metric-card
+    sparklines with day-over-day trend arrows.
+32. [x] **Activity heatmap.** Weekday × hour grid of connection starts.
+33. [x] **Today's session timeline.** A Gantt of who was connected and when,
+    with live sessions highlighted.
+34. [x] **Live architecture diagram.** Cisco ISR → Duo Proxy → FreeRADIUS → Duo
+    Cloud with per-component health and an animated flow.

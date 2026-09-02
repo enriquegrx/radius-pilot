@@ -9,7 +9,7 @@
     <link rel="icon" href="{{ url_for('static', path='branding/radiuspilot.ico') }}" sizes="any">
     <link rel="apple-touch-icon" href="{{ url_for('static', path='branding/apple-touch-icon.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-8">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-9">
   </head>
   <body data-custom-access-enabled="{{ 'true' if custom_access_enabled else 'false' }}" data-access-objects="{{ access_objects | map(attribute='name') | list | tojson | forceescape }}">
     <div class="page">
@@ -41,11 +41,11 @@
           {% if is_auditor %}<div class="alert alert-info" role="status"><strong>Read-only access.</strong> You can view everything but cannot make changes.</div>{% endif %}
 
           <nav class="section-nav" aria-label="Console sections">
-            <a href="#users">Users</a><a href="#activity">Activity</a><a href="#system">System</a>
+            {% if accounting_enabled %}<a href="#overview">Overview</a>{% endif %}<a href="#users">Users</a><a href="#activity">Activity</a><a href="#system">System</a>
           </nav>
 
           <div class="metric-grid">
-            {% if accounting_enabled %}<div class="card metric-card"><div class="card-body"><div class="subheader">Online now</div><div class="h1 mb-0" id="online-now-count">{{ online_count }}</div><div class="text-secondary mt-1">Connected VPN sessions</div></div></div>{% endif %}
+            {% if accounting_enabled %}<div class="card metric-card"><div class="card-body"><div class="subheader">Online now</div><div class="h1 mb-0" id="online-now-count">{{ online_count }}</div><div class="text-secondary mt-1">Connected VPN sessions</div><div id="rp-spark-online" class="mt-2"></div></div></div>{% endif %}
             {% if concurrent_count %}<div class="card metric-card metric-warning"><div class="card-body"><div class="subheader">Concurrent</div><div class="h1 mb-0">{{ concurrent_count }}</div><div class="text-secondary mt-1">Users with multiple sessions</div></div></div>{% endif %}
             <div class="card metric-card"><div class="card-body"><div class="subheader">Enabled</div><div class="h1 mb-0">{{ enabled_count }}</div><div class="text-secondary mt-1">Allowed to authenticate</div></div></div>
             <div class="card metric-card"><div class="card-body"><div class="subheader">Duo protected</div><div class="h1 mb-0">{{ duo_count }}</div><div class="text-secondary mt-1">Password plus Push</div></div></div>
@@ -53,6 +53,35 @@
             <div class="card metric-card"><div class="card-body"><div class="subheader">Blocked</div><div class="h1 mb-0">{{ blocked_count }}</div><div class="text-secondary mt-1">Denied before Duo</div></div></div>
             <div class="card metric-card {% if expiring_count %}metric-warning{% endif %}"><div class="card-body"><div class="subheader">Expiring soon</div><div class="h1 mb-0">{{ expiring_count }}</div><div class="text-secondary mt-1">Within the next 7 days</div></div></div>
           </div>
+
+          {% if accounting_enabled %}
+          <section id="overview" class="console-section">
+            <script type="application/json" id="dashboard-data">{{ dashboard | tojson }}</script>
+            <div class="overview-grid">
+              <div class="viz-card col-8">
+                <div class="viz-head"><h2 class="viz-title">Live connection map</h2><a class="btn btn-sm btn-outline-secondary" href="/wall" target="_blank" rel="noopener">Wall display ↗</a></div>
+                <div class="map-wrap" id="rp-map"></div>
+                <div class="map-stats"><div class="viz-figure"><span class="n" id="rp-map-online">{{ dashboard.totals.online if dashboard.totals else 0 }}</span><span class="k">online</span></div><div class="viz-figure"><span class="n" id="rp-map-places">0</span><span class="k">locations</span></div><div class="viz-figure"><span class="n" id="rp-map-unresolved">0</span><span class="k">on private/LAN</span></div></div>
+              </div>
+              <div class="viz-card col-4">
+                <div class="viz-head"><h2 class="viz-title">Today</h2><span class="viz-sub" id="rp-updated"></span></div>
+                <div class="viz-figures">
+                  <div class="viz-figure"><span class="n" id="rp-total-sessions">—</span><span class="k">sessions</span><span id="rp-trend-sessions" class="rp-trend"></span></div>
+                  <div class="viz-figure"><span class="n" id="rp-total-usage">—</span><span class="k">data</span><span id="rp-trend-usage" class="rp-trend"></span></div>
+                  <div class="viz-figure"><span class="n" id="rp-total-users">—</span><span class="k">distinct users</span></div>
+                </div>
+                <div><div class="viz-sub">Sessions · last 14 days</div><div id="rp-spark-daily"></div></div>
+              </div>
+              <div class="viz-card col-8"><div class="viz-head"><h2 class="viz-title">Concurrent sessions · last 24 h</h2></div><div id="rp-online"></div></div>
+              <div class="viz-card col-4"><div class="viz-head"><h2 class="viz-title">Top talkers</h2><span class="viz-sub">data used</span></div><div id="rp-top"></div></div>
+              <div class="viz-card col-6"><div class="viz-head"><h2 class="viz-title">Connections by hour of day</h2></div><div id="rp-hourly"></div></div>
+              <div class="viz-card col-6"><div class="viz-head"><h2 class="viz-title">Sessions · last 14 days</h2></div><div id="rp-daily"></div></div>
+              <div class="viz-card col-6"><div class="viz-head"><h2 class="viz-title">Activity heatmap</h2><span class="viz-sub">weekday × hour</span></div><div id="rp-heatmap"></div></div>
+              <div class="viz-card col-6"><div class="viz-head"><h2 class="viz-title">Today’s sessions</h2><span class="viz-sub">timeline</span></div><div id="rp-timeline"></div></div>
+              <div class="viz-card col-12"><div class="viz-head"><h2 class="viz-title">Authentication path</h2><span class="viz-sub">live component health</span></div><div id="rp-arch"></div></div>
+            </div>
+          </section>
+          {% endif %}
 
           <section id="users" class="console-section">
             <div class="card user-card">
@@ -239,6 +268,7 @@
       <div class="modal-footer"><button type="button" class="btn btn-link link-secondary" data-dialog-close>Cancel</button><button class="btn btn-danger">Delete object</button></div>
     </form></dialog>
 
-    <script src="{{ url_for('static', path='app.js') }}?v=20260902-8"></script>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260902-9"></script>
+    <script src="{{ url_for('static', path='charts.js') }}?v=20260902-9"></script>
   </body>
 </html>

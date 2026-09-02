@@ -22,6 +22,8 @@ def fake_helper(operation: str, _payload=None):
         return {"ok": True, "invitations": []}
     if operation == "panel-status":
         return {"ok": True, "panel_access": True, "role": "admin"}
+    if operation == "dashboard":
+        return {"ok": True}
     assert operation == "list"
     return {
         "ok": True,
@@ -436,6 +438,59 @@ def test_dashboard_render_smoke(monkeypatch) -> None:
             }
         if operation == "panel-status":
             return {"ok": True, "panel_access": True, "role": "admin"}
+        if operation == "dashboard":
+            return {
+                "ok": True,
+                "generated_at": "2026-09-02T14:00:00",
+                "online_series": [{"hour": f"{h:02d}:00", "count": h % 5} for h in range(24)],
+                "hourly": [h % 7 for h in range(24)],
+                "heatmap": [[((d + h) % 4) for h in range(24)] for d in range(7)],
+                "daily": [
+                    {
+                        "date": f"2026-08-{20 + i:02d}",
+                        "label": f"{20 + i} Aug",
+                        "sessions": i,
+                        "bytes": i * 1000,
+                    }
+                    for i in range(14)
+                ],
+                "timeline": [
+                    {
+                        "user": "custom-user",
+                        "start_min": 420,
+                        "end_min": 540,
+                        "active": True,
+                        "usage": "1 MB",
+                    }
+                ],
+                "top_users": [{"user": "custom-user", "bytes": 1000, "usage": "1 KB"}],
+                "totals": {
+                    "online": 1,
+                    "concurrent": 0,
+                    "sessions_today": 3,
+                    "sessions_prev": 2,
+                    "bytes_today": 2000,
+                    "bytes_prev": 1000,
+                    "usage_today": "2 KB",
+                    "users_today": 1,
+                },
+                "geo": {
+                    "points": [
+                        {"lat": 37.1, "lon": -3.6, "city": "Granada", "country": "ES",
+                         "country_name": "Spain", "count": 1, "users": ["custom-user"]}
+                    ],
+                    "unresolved": 0,
+                    "server": {"lat": 37.1, "lon": -3.6, "label": "Gateway"},
+                },
+                "health": {
+                    "active": True,
+                    "config_valid": True,
+                    "duo_active": True,
+                    "nginx_active": True,
+                },
+                "accounting_enabled": True,
+                "coa_enabled": True,
+            }
         raise AssertionError(f"unexpected helper operation {operation}")
 
     monkeypatch.setattr(app_module, "call_helper", rich_helper)

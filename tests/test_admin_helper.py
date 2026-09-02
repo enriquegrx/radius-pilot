@@ -1223,6 +1223,39 @@ def test_session_history_orders_and_marks_active(store: Store) -> None:
     assert history[1]["active"] is False
 
 
+def test_dashboard_aggregates_and_geolocates(store: Store) -> None:
+    detail = (
+        "Tue Sep  2 08:00:00 2026\n"
+        '\tUser-Name = "granada-user"\n\tAcct-Status-Type = Start\n'
+        '\tAcct-Session-Id = "LIVE"\n\tFramed-IP-Address = 192.0.2.10\n'
+        '\tCalling-Station-Id = "150.214.205.52"\n\n'
+        "Tue Sep  2 08:20:00 2026\n"
+        '\tUser-Name = "granada-user"\n\tAcct-Status-Type = Interim-Update\n'
+        '\tAcct-Session-Id = "LIVE"\n\tFramed-IP-Address = 192.0.2.10\n'
+        '\tCalling-Station-Id = "150.214.205.52"\n'
+        "\tAcct-Session-Time = 1200\n\tAcct-Output-Octets = 5242880\n"
+        "\tAcct-Input-Octets = 1048576\n\n"
+        "Tue Sep  2 07:00:00 2026\n"
+        '\tUser-Name = "lan-user"\n\tAcct-Status-Type = Stop\n'
+        '\tAcct-Session-Id = "DONE"\n\tCalling-Station-Id = "10.0.0.5"\n'
+        "\tAcct-Session-Time = 1800\n\n"
+    )
+    store.accounting_detail_path.write_text(detail)
+    now = datetime(2026, 9, 2, 8, 25, 0)
+    data = store.dashboard(now=now)
+    assert len(data["online_series"]) == 24
+    assert len(data["hourly"]) == 24
+    assert len(data["heatmap"]) == 7 and all(len(row) == 24 for row in data["heatmap"])
+    assert data["totals"]["online"] == 1
+    assert data["totals"]["sessions_today"] == 2
+    # the live UGR session is placed in Granada; the private-IP one is not plotted
+    cities = {p["city"] for p in data["geo"]["points"]}
+    assert "Granada" in cities
+    assert data["geo"]["unresolved"] == 0
+    assert any(item["user"] == "granada-user" for item in data["timeline"])
+    assert data["top_users"][0]["user"] in {"granada-user", "lan-user"}
+
+
 def test_disconnect_session_sends_coa(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RADIUS_ADMIN_COA_TARGET", "192.0.2.1:1700")
     monkeypatch.setenv("RADIUS_ADMIN_COA_SECRET", "coa-secret")

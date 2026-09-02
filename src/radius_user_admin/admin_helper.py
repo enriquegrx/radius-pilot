@@ -43,6 +43,11 @@ from radius_user_admin.access_policy import (
     resolved_policy,
 )
 
+try:  # optional: the map degrades to no points if geoip is unavailable
+    from radius_user_admin import geoip
+except Exception:  # pragma: no cover - defensive
+    geoip = None  # type: ignore[assignment]
+
 USERNAME = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
 CLEAR_AUTHORIZE_LINE = re.compile(
     r'^([a-z0-9][a-z0-9._@-]{0,63})\s+Cleartext-Password\s*:=\s*"((?:[^"\\]|\\.)*)"\s*$'
@@ -86,6 +91,7 @@ OPERATIONS = {
     "duo-enrollment",
     "set-duo-enroll-api",
     "session-history",
+    "dashboard",
     "disconnect",
     "migrate-passwords",
     "invite-create",
@@ -116,6 +122,13 @@ def runtime_setting(name: str, default: str) -> str:
     except OSError:
         pass
     return default
+
+
+def _float_setting(name: str, default: float) -> float:
+    try:
+        return float(runtime_setting(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
 
 DEFAULT_AUTHORIZE_PATH = Path(
@@ -2123,6 +2136,185 @@ class Store:
         clean = clean_username(username)
         return self.recent_connections(now=now, per_user=limit).get(clean, [])
 
+    def dashboard(self, now: datetime | None = None) -> dict[str, Any]:
+        """Aggregated data for the visual dashboard, reconstructed in a single
+        pass over the accounting detail file so it stores no state and adds no
+        dependency: an online-over-time series, connection histograms, a
+        weekday/hour heatmap, per-day usage, a today timeline, the top talkers,
+        and geolocated live sessions for the map."""
+        if now is None:
+            now = datetime.now()
+        try:
+            window = timedelta(
+                seconds=int(runtime_setting("RADIUS_ADMIN_ACCT_STALE_SECONDS", "1800"))
+            )
+        except ValueError:
+            window = timedelta(seconds=1800)
+
+        sessions: list[dict[str, Any]] = []
+        for record in self._accounting_records().values():
+            username = record["username"]
+            stamp = record["stamp"]
+            if not username or stamp is None:
+                continue
+            attributes = record["attributes"]
+            try:
+                seconds = int(attributes.get("Acct-Session-Time") or 0)
+            except ValueError:
+                seconds = 0
+            stopped = record["status"] == "Stop"
+            active = not stopped and now - stamp <= window
+            start = stamp - timedelta(seconds=seconds) if seconds else stamp
+            end = stamp if stopped else (now if active else stamp)
+            rx = self._octets(attributes, "Output")
+            tx = self._octets(attributes, "Input")
+            sessions.append(
+                {
+                    "user": username,
+                    "start": start,
+                    "end": end,
+                    "active": active,
+                    "bytes": rx + tx,
+                    "client_ip": attributes.get("Calling-Station-Id", ""),
+                }
+            )
+
+        # Concurrent online sessions in each of the last 24 hourly buckets.
+        online_series: list[dict[str, Any]] = []
+        for offset in range(23, -1, -1):
+            bucket_start = (now - timedelta(hours=offset)).replace(
+                minute=0, second=0, microsecond=0
+            )
+            bucket_end = bucket_start + timedelta(hours=1)
+            online_series.append(
+                {
+                    "hour": bucket_start.strftime("%H:%M"),
+                    "count": sum(
+                        1
+                        for s in sessions
+                        if s["start"] < bucket_end and s["end"] >= bucket_start
+                    ),
+                }
+            )
+
+        # Connection starts by hour of day, and a weekday x hour heatmap.
+        hourly = [0] * 24
+        heatmap = [[0] * 24 for _ in range(7)]
+        for s in sessions:
+            hourly[s["start"].hour] += 1
+            heatmap[s["start"].weekday()][s["start"].hour] += 1
+
+        # Sessions and usage per day for the last 14 days.
+        today = now.date()
+        daily: list[dict[str, Any]] = []
+        for offset in range(13, -1, -1):
+            day = today - timedelta(days=offset)
+            day_sessions = [s for s in sessions if s["start"].date() == day]
+            daily.append(
+                {
+                    "date": day.isoformat(),
+                    "label": day.strftime("%d %b"),
+                    "sessions": len(day_sessions),
+                    "bytes": sum(s["bytes"] for s in day_sessions),
+                }
+            )
+
+        # Today's sessions as minutes-from-midnight spans for a Gantt view.
+        midnight = datetime.combine(today, datetime.min.time())
+        timeline: list[dict[str, Any]] = []
+        for s in sorted(sessions, key=lambda item: item["start"]):
+            if s["end"].date() < today or s["start"].date() > today:
+                continue
+            start_min = max(0, int((s["start"] - midnight).total_seconds() // 60))
+            end_min = min(1440, int((s["end"] - midnight).total_seconds() // 60))
+            timeline.append(
+                {
+                    "user": s["user"],
+                    "start_min": start_min,
+                    "end_min": max(end_min, start_min + 1),
+                    "active": s["active"],
+                    "usage": human_bytes(s["bytes"]),
+                }
+            )
+
+        # Top talkers over the retained window.
+        by_user: dict[str, int] = {}
+        for s in sessions:
+            by_user[s["user"]] = by_user.get(s["user"], 0) + s["bytes"]
+        top_users = [
+            {"user": user, "bytes": total, "usage": human_bytes(total)}
+            for user, total in sorted(by_user.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        ]
+
+        # Live sessions, geolocated: one point per distinct city.
+        online = [s for s in sessions if s["active"]]
+        active_by_user: dict[str, int] = {}
+        for s in online:
+            active_by_user[s["user"]] = active_by_user.get(s["user"], 0) + 1
+        points: dict[tuple[float, float], dict[str, Any]] = {}
+        unresolved = 0
+        for s in online:
+            loc = geoip.locate(s["client_ip"]) if geoip and s["client_ip"] else None
+            if not loc or loc.get("private"):
+                unresolved += 1
+                continue
+            key = (round(loc["lat"], 2), round(loc["lon"], 2))
+            point = points.setdefault(
+                key,
+                {
+                    "lat": loc["lat"],
+                    "lon": loc["lon"],
+                    "city": loc.get("city", ""),
+                    "country": loc.get("country", ""),
+                    "country_name": loc.get("country_name", ""),
+                    "count": 0,
+                    "users": [],
+                },
+            )
+            point["count"] += 1
+            if s["user"] not in point["users"]:
+                point["users"].append(s["user"])
+
+        yesterday = today - timedelta(days=1)
+        today_sessions = [s for s in sessions if s["start"].date() == today]
+        yday_sessions = [s for s in sessions if s["start"].date() == yesterday]
+
+        return {
+            "generated_at": now.isoformat(timespec="seconds"),
+            "online_series": online_series,
+            "hourly": hourly,
+            "heatmap": heatmap,
+            "daily": daily,
+            "timeline": timeline,
+            "top_users": top_users,
+            "totals": {
+                "online": len(online),
+                "concurrent": sum(1 for count in active_by_user.values() if count > 1),
+                "sessions_today": len(today_sessions),
+                "sessions_prev": len(yday_sessions),
+                "bytes_today": sum(s["bytes"] for s in today_sessions),
+                "bytes_prev": sum(s["bytes"] for s in yday_sessions),
+                "usage_today": human_bytes(sum(s["bytes"] for s in today_sessions)),
+                "users_today": len({s["user"] for s in today_sessions}),
+            },
+            "geo": {
+                "points": sorted(points.values(), key=lambda p: p["count"], reverse=True),
+                "unresolved": unresolved,
+                "server": {
+                    "lat": _float_setting("RADIUS_ADMIN_SITE_LAT", 37.1773),
+                    "lon": _float_setting("RADIUS_ADMIN_SITE_LON", -3.5986),
+                    "label": runtime_setting("RADIUS_ADMIN_SITE_LABEL", "Gateway").strip()
+                    or "Gateway",
+                },
+            },
+            "health": self.health(),
+            "accounting_enabled": self.accounting_detail_path.exists(),
+            "coa_enabled": bool(
+                runtime_setting("RADIUS_ADMIN_COA_TARGET", "").strip()
+                and runtime_setting("RADIUS_ADMIN_COA_SECRET", "").strip()
+            ),
+        }
+
     def disconnect_session(self, username: object) -> int:
         """Ask the gateway to drop a user's live session(s) via RADIUS CoA
         (Disconnect-Request). Requires RADIUS_ADMIN_COA_TARGET and
@@ -2642,6 +2834,8 @@ def main() -> int:
             result = {}
         elif args.operation == "session-history":
             result = {"history": store.session_history(payload.get("username"))}
+        elif args.operation == "dashboard":
+            result = store.dashboard()
         elif args.operation == "disconnect":
             result = {"disconnected": store.disconnect_session(payload.get("username"))}
         elif args.operation == "migrate-passwords":

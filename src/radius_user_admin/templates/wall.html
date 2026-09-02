@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>RadiusPilot · Wall</title>
+    <link rel="icon" href="{{ url_for('static', path='branding/favicon.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-9">
+  </head>
+  <body class="wall" data-wall="1">
+    {% set h = dashboard.health or {} %}
+    {% set healthy = h.active and h.config_valid and h.duo_active and h.nginx_active %}
+    <script type="application/json" id="dashboard-data">{{ dashboard | tojson }}</script>
+    <div class="wall">
+      <div class="wall-head">
+        <div><h1>{{ organization }} · VPN operations</h1><div class="wall-org">RadiusPilot · live wall</div></div>
+        <div class="wall-status {{ 'ok' if healthy else 'bad' }}"><span class="dot"></span>{{ 'Authentication healthy' if healthy else 'Service needs attention' }}</div>
+        <div class="wall-clock" id="wall-clock">--:--:--</div>
+      </div>
+      {% if error %}<div class="wall-panel">Cannot load live data: {{ error }}</div>{% endif %}
+      <div class="wall-grid">
+        <div class="wall-left">
+          <div class="wall-kpis">
+            <div class="wall-kpi live"><div class="n" id="rp-total-online">{{ dashboard.totals.online if dashboard.totals else 0 }}</div><div class="k">Online now</div></div>
+            <div class="wall-kpi"><div class="n" id="rp-total-sessions">—</div><div class="k">Sessions today</div></div>
+            <div class="wall-kpi"><div class="n" id="rp-total-usage">—</div><div class="k">Data today</div></div>
+            <div class="wall-kpi"><div class="n" id="rp-total-users">—</div><div class="k">Users today</div></div>
+          </div>
+          <div class="wall-panel wall-map"><h2>Live connection map</h2><div class="map-wrap" id="rp-map"></div></div>
+        </div>
+        <div class="wall-right">
+          <div class="wall-panel"><h2>Concurrent sessions · last 24 h</h2><div id="rp-online"></div></div>
+          <div class="wall-panel"><h2>Authentication path</h2><div id="rp-arch"></div></div>
+          <div class="wall-panel"><h2>Live sessions</h2><ul class="wall-list" id="wall-sessions"></ul></div>
+        </div>
+      </div>
+      <div class="wall-foot">Updated <span id="rp-updated">{{ dashboard.generated_at or '' }}</span> · auto-refreshing</div>
+    </div>
+    <script src="{{ url_for('static', path='charts.js') }}?v=20260902-9"></script>
+    <script>
+      (function () {
+        function tick() {
+          var d = new Date(), p = function (n) { return (n < 10 ? "0" : "") + n; };
+          var el = document.getElementById("wall-clock");
+          if (el) el.textContent = p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+        }
+        tick(); setInterval(tick, 1000);
+      })();
+    </script>
+  </body>
+</html>

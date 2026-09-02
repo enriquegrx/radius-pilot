@@ -337,6 +337,7 @@ def index(request: Request):
         activity = call_helper("audit")
         backups = call_helper("backups")["backups"]
         invitations = call_helper("invite-list")["invitations"]
+        dashboard = call_helper("dashboard")
         users = data["users"]
         health = data["health"]
         access_policy = data.get(
@@ -349,6 +350,7 @@ def index(request: Request):
     except HelperError as exc:
         users, backups, invitations, error = [], [], [], str(exc)
         activity = {"events": [], "auth_events": []}
+        dashboard = {}
         health = {
             "active": False,
             "config_valid": False,
@@ -399,6 +401,7 @@ def index(request: Request):
             ),
             "panel_admin_count": sum(user["panel_access"] for user in users),
             "expiring_count": sum(user["expires_soon"] for user in users),
+            "dashboard": dashboard,
             "online_count": data.get("online_count", 0) if not error else 0,
             "accounting_enabled": bool(data.get("accounting_enabled")) if not error else False,
             "concurrent_count": data.get("concurrent_count", 0) if not error else 0,
@@ -448,6 +451,35 @@ def sessions_json(request: Request):
         "concurrent_count": data.get("concurrent_count", 0),
         "online": online,
     }
+
+
+@app.get("/dashboard.json")
+def dashboard_json(request: Request):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return Response(status_code=401)
+    try:
+        return call_helper("dashboard", helper_payload(request, {}))
+    except HelperError:
+        return Response(status_code=503)
+
+
+@app.get("/wall")
+def wall(request: Request):
+    admin = require_admin(request)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    try:
+        dashboard = call_helper("dashboard")
+    except HelperError as exc:
+        return templates.TemplateResponse(
+            request, "wall.html", {"dashboard": {}, "organization": ORGANIZATION, "error": str(exc)}
+        )
+    return templates.TemplateResponse(
+        request,
+        "wall.html",
+        {"dashboard": dashboard, "organization": ORGANIZATION, "error": ""},
+    )
 
 
 @app.post("/users/{username}/note")
