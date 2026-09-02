@@ -158,7 +158,7 @@ needs a GeoLite2 database.
     consumed by a dedicated FreeRADIUS virtual server (1814); a second Duo Auth
     Proxy integration (1815, `failmode=safe`, forwards `Cisco-AVPair`) fronts it
     so SSH/console logins to the device require password + Push and land at
-    priv 15. The hub's `BIOS-NETADMIN` method lists (login + exec authz, with
+    priv 15. The hub's named method lists (login + exec authz, with
     `local` break-glass and `timeout 60` for the Push) are applied to con 0 and
     the vty lines. Verified end to end: primary Allow + secondary (Push) Allow in
     the Duo log, `show privilege` = 15. Rolling it out to the switches is

@@ -285,7 +285,7 @@ Enable the gateway to accept CoA from `radius01`:
 
 ```
 aaa server radius dynamic-author
- client 172.26.200.112 server-key YOUR-COA-SHARED-SECRET
+ client 192.0.2.10 server-key YOUR-COA-SHARED-SECRET
  auth-type any
  port 1700
 ```
