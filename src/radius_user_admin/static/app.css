@@ -10,6 +10,7 @@ body { background: var(--brand-surface); color: var(--brand-ink); }
 .header-actions { align-items: center; display: flex; flex-wrap: wrap; gap: .65rem; }
 .admin-identity { background: #edf3f9; border-radius: 999px; color: #40556d; font-size: .8125rem; font-weight: 600; padding: .4rem .7rem; }
 .brand-mark { align-items: center; background: linear-gradient(145deg,var(--brand-blue),var(--brand-cyan)); border-radius: 13px; color: #fff; display: flex; font-size: 1.2rem; font-weight: 700; height: 44px; justify-content: center; width: 44px; box-shadow: 0 7px 18px rgba(23,102,177,.2); }
+.brand-logo { display: block; flex: 0 0 auto; height: 44px; width: 44px; }
 .metric-card, .user-card { border: 0; box-shadow: 0 7px 28px rgba(16,36,62,.07); }
 .metric-card { min-height: 132px; }
 .metric-warning { box-shadow: inset 0 3px #f59f00,0 7px 28px rgba(16,36,62,.07); }

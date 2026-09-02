@@ -5,12 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex,nofollow">
     <title>Invitation for {{ username }} · RadiusPilot</title>
+    <link rel="icon" href="{{ url_for('static', path='branding/favicon.svg') }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="{{ url_for('static', path='branding/apple-touch-icon.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260901-11">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-6">
   </head>
   <body class="login-page">
     <main class="login-shell">
-      <div class="login-brand"><div class="brand-mark" aria-hidden="true">R</div><div><h1>RadiusPilot</h1><p>Secure invitation</p></div></div>
+      <div class="login-brand"><img class="brand-logo" src="{{ url_for('static', path='branding/radiuspilot-mark-128.png') }}" alt="" width="44" height="44"><div><h1>RadiusPilot</h1><p>Secure invitation</p></div></div>
       <div class="card login-card"><div class="card-body p-4">
         <h2 class="h2 mb-2">Invitation created</h2>
         <p class="text-secondary">{{ username }} can use this link once, from an approved LAN or VPN network, before {{ expires_at }}.</p>

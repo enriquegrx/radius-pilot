@@ -5,15 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex,nofollow">
     <title>RadiusPilot</title>
+    <link rel="icon" href="{{ url_for('static', path='branding/favicon.svg') }}" type="image/svg+xml">
+    <link rel="icon" href="{{ url_for('static', path='branding/radiuspilot.ico') }}" sizes="any">
+    <link rel="apple-touch-icon" href="{{ url_for('static', path='branding/apple-touch-icon.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', path='vendor/tabler/tabler.min.css') }}?v=20260901-5">
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-5">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=20260902-6">
   </head>
   <body data-custom-access-enabled="{{ 'true' if custom_access_enabled else 'false' }}" data-access-objects="{{ access_objects | map(attribute='name') | list | tojson | forceescape }}">
     <div class="page">
       <header class="navbar navbar-expand-md d-print-none admin-header">
         <div class="container-xl">
           <div class="d-flex align-items-center gap-3">
-            <div class="brand-mark" aria-hidden="true">R</div>
+            <img class="brand-logo" src="{{ url_for('static', path='branding/radiuspilot-mark-128.png') }}" alt="" width="44" height="44">
             <div><div class="navbar-brand m-0 p-0">RadiusPilot</div><div class="text-secondary small">{{ organization }} · VPN identity control</div></div>
           </div>
           <div class="header-actions">
