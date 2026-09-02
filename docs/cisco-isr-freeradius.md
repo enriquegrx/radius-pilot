@@ -285,10 +285,17 @@ aaa server radius dynamic-author
 
 Then set `RADIUS_ADMIN_COA_TARGET` (the gateway's `ip:1700`) and
 `RADIUS_ADMIN_COA_SECRET` (the same key) in the environment file. RadiusPilot
-sends the Disconnect-Request keyed on the session's `Acct-Session-Id`,
-`NAS-IP-Address` and the Cisco `audit-session-id`, which is what IOS XE matches
-for AnyConnect sessions. The user can reconnect afterwards unless the account
-is also blocked. A "Disconnect" button then appears on each online user.
+sends the Disconnect-Request keyed on the session's assigned
+`Framed-IP-Address`, which is what IOS XE matches for AnyConnect sessions. The
+user can reconnect afterwards unless the account is also blocked. A "Disconnect"
+button then appears on each online user.
+
+Platform note: like the downloadable ACLs, CoA teardown must be validated on the
+exact IOS XE release. On some FlexVPN/IKEv2 builds (observed on 17.12) the
+gateway accepts the Disconnect-Request, or answers inconsistently, without
+reliably tearing down the AnyConnect IKEv2 session. Where teardown is required
+and the platform does not honour CoA, block the account instead — the reconnect
+is then refused and the reconciler removes it from the generated file.
 
 ## 9. Prove it end to end
 
