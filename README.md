@@ -258,8 +258,16 @@ Worth knowing:
 - Open the firewall for 1815/udp from each device (see `deploy/nftables.conf`),
   and keep [docs/ports-and-services.md](docs/ports-and-services.md) as the map
   of every port and shared secret in the chain.
-- After changing who holds the device-admin role, restart FreeRADIUS — the
-  `files` module caches the generated file.
+- **Automation accounts.** A deployment pipeline cannot approve a Push, so an
+  account may be marked *password only (devices)*. That exemption lives in the
+  device-admin Duo integration alone: the account authenticates with its
+  password on the network devices while the VPN still demands a Push for it.
+  Prefer this to distributing an SSH key to every device — the credential stays
+  **centrally revocable**: clearing the device-admin role in the console
+  regenerates the authorize file and reloads FreeRADIUS immediately, cutting the
+  account off from every device at once. The trade-off is availability: if
+  RADIUS is unreachable the pipeline cannot log in, while humans still have the
+  lines' `local` break-glass.
 - RADIUS provides login and privilege level. Per-command authorization and
   command accounting are TACACS+ territory, which FreeRADIUS does not speak.
 

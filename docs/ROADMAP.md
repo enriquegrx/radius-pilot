@@ -164,7 +164,11 @@ needs a GeoLite2 database.
     the Duo log, `show privilege` = 15. Rolling it out to the switches is
     repeating the device-side block per device (each gets its own RADIUS client
     entry/secret). Per-command authorization/accounting would still need TACACS+.
-    Device-admin Duo exemptions for automation accounts remain a follow-up.
+    Automation accounts are covered: a per-user "password only (devices)" flag
+    drives an independent exemption block in the device-admin Duo integration,
+    so an unattended deployment credential authenticates with its password alone
+    on the network devices while still requiring Push on the VPN — and stays
+    centrally revocable, unlike an SSH key distributed to every device.
 38. [ ] **FlexVPN site-to-site peers under RADIUS.** Bring the cert/PSK
     site-to-site tunnels under RADIUS authorization + accounting + dynamic-author
     so peers appear in the console (map/online) and can be torn down on demand
