@@ -65,8 +65,21 @@ COPYFILE_DISABLE=1 tar -czf "$TARBALL" -C "$REPO_DIR/src" \
 say "Uploading to $TARGET"
 $SSH "$TARGET" 'cat > /tmp/rp-release.tgz' < "$TARBALL"
 
+# Passwordless sudo is the fast path. When the target account needs a password,
+# fall back to a tty so sudo can prompt: the deploying operator types it. This
+# keeps the script usable without granting the account a standing NOPASSWD rule.
+if $SSH "$TARGET" 'sudo -n true' 2>/dev/null; then
+    SUDO_SSH="$SSH"
+    SUDO_CMD="sudo -n"
+else
+    say "The target account needs a sudo password — it will prompt below"
+    SUDO_SSH="ssh -tt -o ConnectTimeout=15"
+    [ -n "$JUMP" ] && SUDO_SSH="$SUDO_SSH -J $JUMP"
+    SUDO_CMD="sudo"
+fi
+
 say "Deploying on $TARGET (backup, install, validate, reconcile, restart)"
-$SSH "$TARGET" "sudo -n sh -s -- '$VERSION'" <<'REMOTE'
+$SUDO_SSH "$TARGET" "$SUDO_CMD sh -s -- '$VERSION'" <<'REMOTE'
 set -eu
 VERSION="$1"
 APP_DIR=/opt/radius-user-admin
