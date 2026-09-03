@@ -340,6 +340,7 @@ class Store:
         invitation_path: Path = Path("/var/lib/radius-user-admin/invitations.json"),
         duo_enroll_config_path: Path = Path("/etc/radius-user-admin/duo-enroll-api.json"),
         monitor_path: Path = Path("/var/lib/radius-user-admin/monitor.json"),
+        canary_path: Path = Path("/var/lib/radius-user-admin/canary.json"),
         geo_settings_path: Path = Path("/var/lib/radius-user-admin/geo.json"),
         geo_compiled_path: Path = Path("/etc/freeradius/3.0/radius-pilot-geo-policy.json"),
         device_admin_path: Path = Path(
@@ -364,6 +365,7 @@ class Store:
         self.invitation_path = invitation_path
         self.duo_enroll_config_path = duo_enroll_config_path
         self.monitor_path = monitor_path
+        self.canary_path = canary_path
         self.geo_settings_path = geo_settings_path
         self.geo_compiled_path = geo_compiled_path
         self.device_admin_path = device_admin_path
@@ -985,6 +987,7 @@ class Store:
             "certificate": certificate,
             "last_backup": backups[0] if backups else None,
             "disk_free_mb": disk_free_mb,
+            "canary": self.canary_status(),
         }
 
     def _service_active(self, service: str) -> bool:
@@ -1025,6 +1028,116 @@ class Store:
             "valid": days >= 0,
             "expires_at": expires.isoformat(timespec="seconds"),
             "days_remaining": days,
+        }
+
+    def canary_settings(self) -> dict[str, Any]:
+        """Configuration for the synthetic authentication canary."""
+        try:
+            timeout = max(1, int(runtime_setting("RADIUS_ADMIN_CANARY_TIMEOUT", "5")))
+        except ValueError:
+            timeout = 5
+        try:
+            max_age = max(1, int(runtime_setting("RADIUS_ADMIN_CANARY_MAX_AGE_MIN", "20")))
+        except ValueError:
+            max_age = 20
+        username = runtime_setting("RADIUS_ADMIN_CANARY_USERNAME", "").strip()
+        password = runtime_setting("RADIUS_ADMIN_CANARY_PASSWORD", "")
+        secret = runtime_setting("RADIUS_ADMIN_CANARY_SECRET", "")
+        return {
+            "enabled": bool(username and password and secret),
+            "target": runtime_setting("RADIUS_ADMIN_CANARY_TARGET", "127.0.0.1:18120").strip(),
+            "username": username,
+            "password": password,
+            "secret": secret,
+            "timeout": timeout,
+            "max_age_minutes": max_age,
+        }
+
+    def run_canary(self) -> dict[str, Any]:
+        """Send a real Access-Request and record the verdict.
+
+        Proves the whole authentication path answers correctly, not merely that
+        the services are running. Never raises: a broken canary must not break
+        the reconcile.
+        """
+        settings = self.canary_settings()
+        if not settings["enabled"]:
+            return {"enabled": False, "ok": None, "checked_at": None, "detail": "not configured"}
+        request = (
+            f'User-Name = "{settings["username"]}"\n'
+            f'User-Password = "{settings["password"]}"\n'
+        )
+        try:
+            result = self.runner(
+                [
+                    "/usr/bin/radclient",
+                    "-t",
+                    str(settings["timeout"]),
+                    "-r",
+                    "1",
+                    settings["target"],
+                    "auth",
+                    settings["secret"],
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                input=request,
+                timeout=settings["timeout"] + 10,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            outcome = {"ok": False, "detail": f"radclient failed to run: {type(error).__name__}"}
+        else:
+            output = f"{result.stdout}\n{result.stderr}"
+            if "Access-Accept" in output:
+                outcome = {"ok": True, "detail": "Access-Accept"}
+            elif "Access-Reject" in output:
+                outcome = {"ok": False, "detail": "Access-Reject"}
+            elif "no response" in output.lower() or result.returncode != 0:
+                outcome = {"ok": False, "detail": "no response from the RADIUS server"}
+            else:
+                outcome = {"ok": False, "detail": "unexpected radclient result"}
+        state = {
+            "enabled": True,
+            "checked_at": now(),
+            "target": settings["target"],
+            "username": settings["username"],
+            **outcome,
+        }
+        try:
+            self._atomic_write(self.canary_path, json.dumps(state) + "\n", 0o600)
+        except OSError:
+            pass
+        return state
+
+    def canary_status(self) -> dict[str, Any]:
+        """Last recorded canary verdict, with its age."""
+        settings = self.canary_settings()
+        try:
+            state = json.loads(self.canary_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            state = {}
+        checked_at = state.get("checked_at")
+        age_minutes: int | None = None
+        if checked_at:
+            try:
+                delta = datetime.now(UTC) - datetime.fromisoformat(checked_at)
+                age_minutes = max(0, int(delta.total_seconds() // 60))
+            except ValueError:
+                age_minutes = None
+        return {
+            "enabled": settings["enabled"],
+            "ok": state.get("ok"),
+            "detail": state.get("detail", ""),
+            "target": state.get("target", settings["target"]),
+            "username": state.get("username", settings["username"]),
+            "checked_at": checked_at,
+            "age_minutes": age_minutes,
+            "max_age_minutes": settings["max_age_minutes"],
+            "stale": bool(
+                settings["enabled"]
+                and (age_minutes is None or age_minutes > settings["max_age_minutes"])
+            ),
         }
 
     def mutate(self, operation: str, payload: dict[str, Any]) -> None:
@@ -1460,6 +1573,10 @@ class Store:
             changes.append("reconciled managed RADIUS authorization")
         changes.extend(self._rotate_audit())
         changes.extend(self._prune_backups())
+        canary = self.run_canary()
+        if canary.get("enabled"):
+            verdict = "ok" if canary["ok"] else f"FAILED ({canary['detail']})"
+            changes.append(f"authentication canary {verdict}")
         changes.extend(self._health_alerts())
         return changes
 
@@ -1487,6 +1604,20 @@ class Store:
         disk = health["disk_free_mb"]
         if disk is not None and disk < 512:
             issues.append(("disk", f"Low disk space: {disk} MiB free."))
+        canary = health.get("canary") or {}
+        if canary.get("enabled"):
+            if canary.get("ok") is False:
+                issues.append(
+                    (
+                        "canary",
+                        "The end-to-end authentication check is failing "
+                        f"({canary.get('detail') or 'unknown reason'}).",
+                    )
+                )
+            elif canary.get("stale"):
+                issues.append(
+                    ("canary", "The end-to-end authentication check has not run recently.")
+                )
         return issues
 
     def _health_alerts(self) -> list[str]:

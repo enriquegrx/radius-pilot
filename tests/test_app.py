@@ -931,3 +931,72 @@ def test_enrollment_redirect_has_a_fixed_local_destination(monkeypatch) -> None:
     enrollment = client.get("/duo-enrollment")
     assert enrollment.status_code == 200
     assert "vpn-test-user" in enrollment.text
+
+
+def _render_with_canary(monkeypatch, canary) -> str:
+    """Render the dashboard with a given canary payload in health."""
+
+    def helper(operation: str, payload=None):
+        data = fake_helper(operation, payload)
+        if operation == "list":
+            health = dict(data["health"])
+            if canary is None:
+                health.pop("canary", None)
+            else:
+                health["canary"] = canary
+            data = {**data, "health": health}
+        return data
+
+    monkeypatch.setattr(app_module, "call_helper", helper)
+    client = TestClient(app_module.app)
+    login_page = client.get("/login")
+    token = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    client.post(
+        "/login",
+        data={"csrf": token, "username": "admin", "password": "test-password"},
+    )
+    response = client.get("/")
+    assert response.status_code == 200
+    return response.text
+
+
+def _canary_card(html: str) -> str:
+    index = html.find("End-to-end authentication")
+    assert index != -1, "the canary card is missing from the System tab"
+    return " ".join(html[index - 300 : index + 260].split())
+
+
+def test_canary_card_reports_every_state(monkeypatch) -> None:
+    healthy = _canary_card(
+        _render_with_canary(
+            monkeypatch,
+            {"enabled": True, "ok": True, "stale": False, "age_minutes": 3, "detail": "ok"},
+        )
+    )
+    assert "bg-green" in healthy and "Last real login OK" in healthy and "3 min ago" in healthy
+
+    failing = _canary_card(
+        _render_with_canary(
+            monkeypatch,
+            {"enabled": True, "ok": False, "stale": False, "detail": "Access-Reject"},
+        )
+    )
+    assert "bg-red" in failing and "Failing — Access-Reject" in failing
+
+    stale = _canary_card(
+        _render_with_canary(
+            monkeypatch,
+            {"enabled": True, "ok": True, "stale": True, "age_minutes": 90, "detail": ""},
+        )
+    )
+    assert "bg-yellow" in stale and "Stale" in stale
+
+    off = _canary_card(_render_with_canary(monkeypatch, {"enabled": False, "ok": None}))
+    assert "bg-secondary" in off and "Not configured" in off
+
+
+def test_canary_card_survives_an_older_helper(monkeypatch) -> None:
+    """A helper predating the canary sends no key at all — the card must still
+    render rather than raising and taking the whole dashboard down."""
+    card = _canary_card(_render_with_canary(monkeypatch, None))
+    assert "bg-secondary" in card and "Not configured" in card

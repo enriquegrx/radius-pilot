@@ -344,6 +344,35 @@ Set `RADIUS_ADMIN_AUTHORIZE_PATH` when the managed FreeRADIUS files module uses
 a site-specific directory. The helper deliberately has no directory discovery:
 an explicit path prevents it from editing the wrong `authorize` file.
 
+### End-to-end authentication canary 🐤
+
+Knowing the services are *running* is not the same as knowing a login *works*.
+A stale `authorize` file, a password hash that never got written, a shared
+secret changed on one side only — every one of these leaves systemd reporting
+four green services while nobody can connect.
+
+So every reconcile the helper performs a real authentication: an actual RADIUS
+Access-Request for a dedicated, low-privilege account, sent down the same path a
+user takes. The verdict lands in the System card as **Last real login OK ·
+N min ago**, and a canary that starts failing — or simply stops reporting —
+raises the same email alert as a service being down.
+
+```
+RADIUS_ADMIN_CANARY_USERNAME=auth-canary
+RADIUS_ADMIN_CANARY_PASSWORD=<the canary account's password>
+RADIUS_ADMIN_CANARY_SECRET=<the target's shared secret>
+RADIUS_ADMIN_CANARY_TARGET=127.0.0.1:18120
+```
+
+Create the account in the console like any other user, with no roles and no
+device administration, so it can be revoked from the panel the moment it is not
+wanted. All three of username, password and secret must be present or the canary
+stays off; the default target is the FreeRADIUS backend that actually verifies
+the password. Point it at the Duo proxy instead to cover the proxy as well — but
+mark the account password-only first, or every check fires a push at somebody's
+phone. A canary that cannot run is only ever a health issue: it never fails the
+reconcile it rides on.
+
 ### Per-user VPN access policies
 
 Every account has one of two network access modes:

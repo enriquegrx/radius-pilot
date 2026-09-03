@@ -62,3 +62,22 @@ RADIUS_ADMIN_SITE_LABEL=Gateway
 # fail-open). Set the same variable in the FreeRADIUS service environment so the
 # geo-check hook can read it.
 # RADIUS_ADMIN_GEOIP_MMDB=/etc/radius-user-admin/GeoLite2-Country.mmdb
+
+# Optional. End-to-end authentication canary. Every reconcile (default: 5 min)
+# the helper sends a real RADIUS Access-Request for a dedicated, low-privilege
+# principal and records the verdict, so a silent break anywhere in the chain —
+# a stale authorize file, a bad hash, a rejected shared secret — is caught
+# before a user hits it. The System card shows "Last real login OK: N min ago",
+# and a failing or stale canary raises the same email alert as a service being
+# down. All three of USERNAME, PASSWORD and SECRET must be set or the canary
+# stays off. TARGET defaults to the Duo proxy's FreeRADIUS backend, which is the
+# link that actually verifies the password; point it at the proxy instead to
+# cover the proxy too (the canary account must then be Duo-exempt, or every
+# check sends a push). Create the account in the console like any other user —
+# no roles, no device admin — so it can be revoked from the panel.
+# RADIUS_ADMIN_CANARY_USERNAME=auth-canary
+# RADIUS_ADMIN_CANARY_PASSWORD=replace-with-the-canary-account-password
+# RADIUS_ADMIN_CANARY_SECRET=replace-with-the-target-client-shared-secret
+# RADIUS_ADMIN_CANARY_TARGET=127.0.0.1:18120
+# RADIUS_ADMIN_CANARY_TIMEOUT=5
+# RADIUS_ADMIN_CANARY_MAX_AGE_MIN=20

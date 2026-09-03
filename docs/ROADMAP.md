@@ -86,12 +86,17 @@ Items are checked off as they ship.
     a sealed, single-use break-glass credential (email alert when used,
     auto-expiring) and/or an explicit, time-boxed fail-open toggle for one
     administrator during an incident. Highest operational risk today.
-22. [ ] **End-to-end synthetic auth canary.** The monitor proves the service is
-    up, not that the whole chain works. Have the reconcile timer run a full
-    `radclient` Access-Request against a dedicated test principal and surface
-    "last real authentication OK: N min ago" in the System card, so a silent
-    break in router → Duo proxy → FreeRADIUS → hash is caught before a user hits
-    it.
+22. [x] **End-to-end synthetic auth canary.** Every reconcile the helper sends a
+    real `radclient` Access-Request for a dedicated principal and records the
+    verdict; the System card shows "Last real login OK: N min ago" and a failing
+    or stale canary raises the same email alert as a service being down. It
+    catches what a liveness check cannot — a stale `authorize` file, a bad hash,
+    a rejected shared secret — before a user hits it. Off until
+    `RADIUS_ADMIN_CANARY_USERNAME`/`_PASSWORD`/`_SECRET` are set; the target
+    defaults to the FreeRADIUS backend that actually verifies the password
+    (point it at the Duo proxy to cover the proxy too, with a Duo-exempt
+    account so it does not push on every check). Failure is never fatal: a
+    broken canary degrades to a health issue, never to a broken reconcile.
 23. [ ] **Self-service user portal.** A minimal, self-scoped page where a VPN
     user can re-enroll in Duo (QR), change their own password (with the current
     one), see their own sessions and usage, and download the AnyConnect profile

@@ -75,6 +75,7 @@ port=1812
         geo_settings_path=tmp_path / "state/geo.json",
         geo_compiled_path=tmp_path / "state/geo-policy.json",
         device_admin_path=tmp_path / "state/device-admin-authorize",
+        canary_path=tmp_path / "state/canary.json",
         runner=Runner(),
     )
     result.bootstrap()
@@ -1790,3 +1791,81 @@ def test_legacy_invitation_migrates_to_full_access(store: Store) -> None:
 
     status = store.invite_status(invitation["token"])
     assert status["access_policy"] == {"mode": "full", "rules": []}
+
+
+def _canary_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+    values = {
+        "RADIUS_ADMIN_CANARY_USERNAME": "canary",
+        "RADIUS_ADMIN_CANARY_PASSWORD": "canary-password",
+        "RADIUS_ADMIN_CANARY_SECRET": "canary-secret",
+        "RADIUS_ADMIN_CANARY_TARGET": "127.0.0.1:18120",
+    }
+    values.update(overrides)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_canary_is_disabled_until_fully_configured(store: Store) -> None:
+    state = store.run_canary()
+    assert state["enabled"] is False
+    assert state["ok"] is None
+    # An unconfigured canary must never raise a health issue.
+    assert not [key for key, _ in store._health_issues() if key == "canary"]
+
+
+def test_canary_records_accept_and_never_logs_the_password(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _canary_env(monkeypatch)
+
+    def runner(command, **kwargs):
+        if command[0].endswith("radclient"):
+            assert 'User-Name = "canary"' in kwargs["input"]
+            return subprocess.CompletedProcess(command, 0, "Received Access-Accept Id 1", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    store.runner = runner
+    state = store.run_canary()
+    assert state["ok"] is True
+    assert state["detail"] == "Access-Accept"
+    assert "canary-password" not in store.canary_path.read_text()
+
+    status = store.canary_status()
+    assert status["ok"] is True and status["stale"] is False and status["age_minutes"] == 0
+    assert store.health()["canary"]["ok"] is True
+
+
+def test_canary_reject_becomes_a_health_issue(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _canary_env(monkeypatch)
+    store.runner = lambda command, **_k: subprocess.CompletedProcess(
+        command, 0, "Received Access-Reject Id 1" if command[0].endswith("radclient") else "", ""
+    )
+    assert store.run_canary()["ok"] is False
+    issues = dict(store._health_issues())
+    assert "canary" in issues and "Access-Reject" in issues["canary"]
+
+
+def test_canary_survives_a_broken_radclient(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _canary_env(monkeypatch)
+
+    def runner(command, **_kwargs):
+        if command[0].endswith("radclient"):
+            raise OSError("radclient is missing")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    store.runner = runner
+    state = store.run_canary()
+    assert state["ok"] is False and "radclient" in state["detail"]
+
+
+def test_canary_without_a_recorded_run_reads_as_stale(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _canary_env(monkeypatch)
+    status = store.canary_status()
+    assert status["enabled"] is True and status["stale"] is True and status["checked_at"] is None
+    assert dict(store._health_issues())["canary"].endswith("has not run recently.")
