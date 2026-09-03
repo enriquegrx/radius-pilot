@@ -525,6 +525,23 @@ def set_device_admin_route(
     )
 
 
+@app.post("/users/{username}/device-duo")
+def set_device_duo_route(
+    username: str,
+    request: Request,
+    csrf: str = Form(),
+    password_only: str = Form(default=""),
+    reason: str = Form(default=""),
+):
+    return mutate(
+        request,
+        csrf,
+        "set-device-duo",
+        {"username": username, "password_only": bool(password_only), "reason": reason},
+        anchor="users",
+    )
+
+
 @app.post("/users/{username}/activation")
 def set_user_activation(
     username: str, request: Request, csrf: str = Form(), activates_at: str = Form(default="")

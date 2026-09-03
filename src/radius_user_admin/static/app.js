@@ -404,6 +404,14 @@
         form.action = `/users/${encode(user)}/device-admin`;
         submit.textContent = enable ? "Grant device admin" : "Revoke device admin";
         if (!enable) submit.className = "btn btn-warning";
+      } else if (action === "device-duo") {
+        const passwordOnly = data.devicePasswordOnly !== "true";
+        title.textContent = `${passwordOnly ? "Use password only" : "Require Duo Push"} on network devices for ${user}?`;
+        description.textContent = passwordOnly ? "Console and SSH logins to the network devices will accept the password without a Duo Push. Intended for automation accounts that cannot approve one; VPN access is unaffected and still requires Push." : "Console and SSH logins to the network devices will require a Duo Push again.";
+        field.innerHTML = `<div class="change-summary ${passwordOnly ? "danger" : ""}"><span>Network devices</span><strong>${passwordOnly ? "Password + Push → password only" : "Password only → password + Push"}</strong></div><input type="hidden" name="password_only" value="${passwordOnly ? "1" : ""}">${passwordOnly ? `<label class="form-label" for="action-input">Reason</label><input class="form-control" id="action-input" name="reason" required maxlength="200" placeholder="e.g. unattended deployment account">` : ""}`;
+        form.action = `/users/${encode(user)}/device-duo`;
+        submit.textContent = passwordOnly ? "Use password only" : "Require Duo Push";
+        if (passwordOnly) submit.className = "btn btn-warning";
       } else if (action === "geo") {
         let policy = {}; try { policy = JSON.parse(data.geo || "{}"); } catch (e) {}
         let regions = {}; try { regions = JSON.parse(document.body.dataset.geoRegions || "{}"); } catch (e) {}

@@ -26,6 +26,8 @@ elif sys.argv[1] == "list":
                         "expires_at": None,
                         "panel_access": True,
                         "device_admin": True,
+                        "device_password_only": False,
+                        "device_password_only_reason": "",
                         "credential_scheme": "nt-hash",
                         "access_policy": {"mode": "full", "rules": []},
                         "access_summary": "Full access",
@@ -283,6 +285,8 @@ elif sys.argv[1] == "invite-accept":
     )
 elif sys.argv[1] == "panel-status":
     print(json.dumps({"ok": True, "panel_access": True,
-                        "device_admin": True, "role": "admin"}))
+                        "device_admin": True,
+                        "device_password_only": False,
+                        "device_password_only_reason": "", "role": "admin"}))
 else:
     print(json.dumps({"ok": True}))

@@ -85,6 +85,7 @@ OPERATIONS = {
     "set-panel-access",
     "set-panel-role",
     "set-device-admin",
+    "set-device-duo",
     "panel-status",
     "audit",
     "backups",
@@ -109,6 +110,13 @@ OPERATIONS = {
 DUO_BEGIN = "# BEGIN RADIUS USER ADMIN EXEMPTIONS"
 DUO_END = "# END RADIUS USER ADMIN EXEMPTIONS"
 DUO_SECTION = "radius_server_auto"
+# The device-administration integration carries its own, independent exemption
+# block, so an automation account can be password-only on the network devices
+# while still requiring Duo Push on the VPN. Optional: deployments without
+# device administration simply have no such section.
+DEVICE_DUO_BEGIN = "# BEGIN RADIUS USER ADMIN DEVICE EXEMPTIONS"
+DEVICE_DUO_END = "# END RADIUS USER ADMIN DEVICE EXEMPTIONS"
+DEVICE_DUO_SECTION = "radius_server_auto1"
 BACKUP_NAME = re.compile(r"^(?:\d{8}T\d{12}Z|deploy-\d{8}T\d{6}Z)$")
 AUDIT_ROTATE_LINES = 10000
 AUDIT_ARCHIVES_KEPT = 6
@@ -610,6 +618,10 @@ class Store:
             public["panel_access"] = item["username"] in panel_admins
             public["panel_role"] = panel_roles.get(item["username"], "")
             public["device_admin"] = bool(item.get("device_admin"))
+            public["device_password_only"] = bool(item.get("device_password_only"))
+            public["device_password_only_reason"] = item.get(
+                "device_password_only_reason", ""
+            )
             geo_effective, geo_source = self.effective_geo_policy(item, geo_settings_data)
             public["geo"] = self._geo_summary(geo_effective, geo_source)
             public["duo_enrollment_active"] = item["username"] in active_enrollments
@@ -1151,6 +1163,28 @@ class Store:
                         user["device_admin"] = True
                     else:
                         user.pop("device_admin", None)
+                        user.pop("device_password_only", None)
+                    user["updated_at"] = now()
+                elif operation == "set-device-duo":
+                    password_only = self._clean_bool(
+                        payload.get("password_only"), "device authentication mode"
+                    )
+                    if password_only and not user.get("device_admin"):
+                        raise AdminError(
+                            "Grant device administration before changing its "
+                            "authentication mode."
+                        )
+                    if password_only:
+                        reason = clean_reason(payload.get("reason"))
+                        if not reason:
+                            raise AdminError(
+                                "A reason is required for password-only device access."
+                            )
+                        user["device_password_only"] = True
+                        user["device_password_only_reason"] = reason
+                    else:
+                        user.pop("device_password_only", None)
+                        user.pop("device_password_only_reason", None)
                     user["updated_at"] = now()
                 elif operation == "set-activation":
                     activates_at = clean_optional_time(
@@ -1180,7 +1214,7 @@ class Store:
 
             data["version"] = 3
             self._commit(data, admin_data=admin_data)
-            self.write_device_admin_file(data)
+            self.apply_device_admin_changes(data)
 
     def mutate_objects(self, operation: str, payload: dict[str, Any]) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1348,7 +1382,7 @@ class Store:
                 raise
             self._commit(data)
         self.compile_geo_policy()
-        self.write_device_admin_file()
+        self.apply_device_admin_changes()
 
     def reconcile(self) -> list[str]:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1359,7 +1393,7 @@ class Store:
             except (AdminError, OSError, json.JSONDecodeError):
                 self._fail_closed_authorize()
                 raise
-        self.write_device_admin_file()
+        self.apply_device_admin_changes()
         self.compile_geo_policy()
         return changes
 
@@ -1688,28 +1722,58 @@ class Store:
             lines.append('    Cisco-AVPair = "shell:priv-lvl=15"')
         return "\n".join(lines) + "\n"
 
-    def write_device_admin_file(self, data: dict[str, Any] | None = None) -> None:
-        """Best-effort write of the device-admin authorize file. Never blocks a
-        normal mutation: the file is consumed by a separate virtual server, and
-        its absence only means device-admin logins are not yet enabled."""
+    def write_device_admin_file(self, data: dict[str, Any] | None = None) -> bool:
+        """Best-effort write of the device-admin authorize file, returning True
+        when its content actually changed. Never blocks a normal mutation: the
+        file is consumed by a separate virtual server, and its absence only means
+        device-admin logins are not yet enabled."""
         try:
             if data is None:
                 data = self.load()
             content = self._render_device_admin(data)
+            try:
+                if self.device_admin_path.read_text() == content:
+                    return False
+            except OSError:
+                pass
             self.device_admin_path.parent.mkdir(parents=True, exist_ok=True)
             self._atomic_write(self.device_admin_path, content, 0o640)
             try:
                 os.chown(self.device_admin_path, 0, grp.getgrnam("freerad").gr_gid)
             except (KeyError, PermissionError, OSError):
                 pass
+            return True
         except (OSError, AdminError):
-            pass
+            return False
 
-    def _render_duo(self, original: str, data: dict[str, Any]) -> str:
-        if original.count(DUO_BEGIN) != original.count(DUO_END):
+    def apply_device_admin_changes(self, data: dict[str, Any] | None = None) -> bool:
+        """Regenerate the device-admin authorize file and, when it changed,
+        restart FreeRADIUS so the change takes effect immediately. The `files`
+        module caches the file at load time, so without this a revoked role would
+        keep working until the next unrelated restart — revocation has to cut
+        device access promptly."""
+        if not self.write_device_admin_file(data):
+            return False
+        self.runner(["/usr/bin/systemctl", "restart", "freeradius"], check=False)
+        return True
+
+    def _render_duo_block(
+        self,
+        original: str,
+        section: str,
+        begin: str,
+        end: str,
+        exemptions: list[str],
+        *,
+        required: bool,
+    ) -> str:
+        """Replace the managed exemption block inside one Duo proxy section.
+        An optional section that is absent leaves the file otherwise untouched,
+        so a deployment without device administration is unaffected."""
+        if original.count(begin) != original.count(end):
             raise AdminError("The managed Duo exemption block is incomplete.")
         managed = re.compile(
-            rf"\n?{re.escape(DUO_BEGIN)}.*?{re.escape(DUO_END)}\n?",
+            rf"\n?{re.escape(begin)}.*?{re.escape(end)}\n?",
             re.DOTALL,
         )
         cleaned = managed.sub("\n", original).rstrip() + "\n"
@@ -1718,12 +1782,14 @@ class Store:
             (
                 index
                 for index, line in enumerate(lines)
-                if line.strip().lower() == f"[{DUO_SECTION}]"
+                if line.strip().lower() == f"[{section}]"
             ),
             None,
         )
         if section_start is None:
-            raise AdminError("The Duo RADIUS server section was not found.")
+            if required:
+                raise AdminError("The Duo RADIUS server section was not found.")
+            return "\n".join(lines).rstrip() + "\n"
         section_end = next(
             (
                 index
@@ -1737,20 +1803,41 @@ class Store:
             for line in lines[section_start + 1 : section_end]
         ):
             raise AdminError("Unmanaged Duo username exemptions require manual review.")
-        exemptions = sorted(
-            user["username"]
-            for user in data["users"]
-            if self._effective_enabled(user) and not self._effective_duo_required(user)
-        )
-        block = [DUO_BEGIN]
+        block = [begin]
         block.extend(
             f"exempt_username_{index}={username}"
             for index, username in enumerate(exemptions, start=1)
         )
-        block.append(DUO_END)
-        insertion = [""] + block
-        lines[section_end:section_end] = insertion
+        block.append(end)
+        lines[section_end:section_end] = [""] + block
         return "\n".join(lines).rstrip() + "\n"
+
+    def _render_duo(self, original: str, data: dict[str, Any]) -> str:
+        """Maintain both exemption blocks: the VPN integration and, when the
+        device-administration integration exists, its own independent one."""
+        vpn = sorted(
+            user["username"]
+            for user in data["users"]
+            if self._effective_enabled(user) and not self._effective_duo_required(user)
+        )
+        devices = sorted(
+            user["username"]
+            for user in data["users"]
+            if self._effective_enabled(user)
+            and user.get("device_admin")
+            and user.get("device_password_only")
+        )
+        rendered = self._render_duo_block(
+            original, DUO_SECTION, DUO_BEGIN, DUO_END, vpn, required=True
+        )
+        return self._render_duo_block(
+            rendered,
+            DEVICE_DUO_SECTION,
+            DEVICE_DUO_BEGIN,
+            DEVICE_DUO_END,
+            devices,
+            required=False,
+        )
 
     def _duo_passes_cisco_avpair(self) -> bool:
         try:
@@ -3179,6 +3266,7 @@ def main() -> int:
             "set-note",
             "set-activation",
             "set-device-admin",
+            "set-device-duo",
             "set-geo-settings",
             "set-user-geo",
             "object-set",

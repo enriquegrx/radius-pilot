@@ -1252,6 +1252,56 @@ def test_device_admin_role_and_render(store: Store) -> None:
     assert "netadmin" not in store.device_admin_path.read_text()
 
 
+def test_device_password_only_is_scoped_to_the_device_integration(store: Store) -> None:
+    # The Duo config gains a device-administration integration alongside the VPN one.
+    store.duo_config_path.write_text(
+        store.duo_config_path.read_text() + "\n[radius_server_auto1]\nport=1815\n"
+    )
+    store.mutate(
+        "create",
+        {"username": "deploy-net", "password": "a-long-password", "duo_required": True},
+    )
+    store.mutate("set-device-admin", {"username": "deploy-net", "device_admin": True})
+    store.mutate(
+        "set-device-duo",
+        {"username": "deploy-net", "password_only": True, "reason": "unattended deployment"},
+    )
+    duo = store.duo_config_path.read_text()
+    vpn_block = duo.split(admin_helper.DUO_BEGIN)[1].split(admin_helper.DUO_END)[0]
+    device_block = duo.split(admin_helper.DEVICE_DUO_BEGIN)[1].split(
+        admin_helper.DEVICE_DUO_END
+    )[0]
+    # Exempt on the devices, still Duo-protected on the VPN.
+    assert "deploy-net" in device_block
+    assert "deploy-net" not in vpn_block
+
+    # Revoking the role clears the device exemption too.
+    store.mutate("set-device-admin", {"username": "deploy-net", "device_admin": False})
+    duo = store.duo_config_path.read_text()
+    device_block = duo.split(admin_helper.DEVICE_DUO_BEGIN)[1].split(
+        admin_helper.DEVICE_DUO_END
+    )[0]
+    assert "deploy-net" not in device_block
+    assert "deploy-net" not in store.device_admin_path.read_text()
+
+
+def test_device_admin_changes_restart_freeradius_immediately(store: Store) -> None:
+    # The files module caches the generated file, so revocation must trigger a
+    # restart or a revoked account would keep working.
+    store.mutate(
+        "create",
+        {"username": "netadmin", "password": "a-long-password", "duo_required": True},
+    )
+    store.runner.commands.clear()
+    store.mutate("set-device-admin", {"username": "netadmin", "device_admin": True})
+    restart = ["/usr/bin/systemctl", "restart", "freeradius"]
+    assert restart in store.runner.commands, "granting the role must reload FreeRADIUS"
+    # A no-op rewrite must not restart anything.
+    store.runner.commands.clear()
+    assert store.apply_device_admin_changes() is False
+    assert restart not in store.runner.commands
+
+
 def test_geo_settings_evaluation_and_override(store: Store) -> None:
     store.mutate(
         "create",
